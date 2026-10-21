@@ -5,9 +5,11 @@ A scroll-spy chip bar for sectioned content in Flutter.
 - A row of chips above the list, one per section. Scrolling selects the
   chip of the section in view.
 - Tap a chip to scroll its section to just below the bar.
-- An optional expand button opens a picker with every section.
-- Built for large text: chip labels wrap and grow instead of being cut,
-  and the bar keeps working up to the largest system text size.
+- An expand button opens a picker when the chips do not all fit.
+- Chip labels stay on one line with ellipsis. The bar chip width is capped
+  at the visible bar width; panel chips wrap at their content widths.
+- Supports text scale through 3.12, including a fixed panel heading and
+  a scrolling chip area.
 
 Not related to the `scroll_spy` package.
 
@@ -45,12 +47,13 @@ Behavior that differs between products is a switch in
 | Field | Default | Effect |
 |---|---|---|
 | `chipSemantics` | `link` | Chips are links in a navigation landmark, or `tab`s. |
-| `showExpandButton` | `true` | Button that opens the section picker. |
+| `showExpandButton` | `true` | Show the picker button when chips overflow. |
 | `showChipFade` | `true` | Fade at the trailing edge of the chip bar. |
 | `showSectionChevron` | `false` | Chevron after each section title (looks only). |
 | `showEmptySections` | `false` | Show sections with no items. |
 | `maxTextScale` | `null` | Upper limit for text scale inside the view and picker. |
 | `focusAfterNavigate` | `preserve` | `announce` also reads the new section or category name once, where announcements are supported. |
+| `panelBottomInset` | `0` | Reserved height from the Navigator bottom; the panel leaves another 80 logical pixels of scrim. |
 
 Callbacks on the widget:
 
@@ -90,15 +93,35 @@ CategorizedChipScrollView<Product>(
 
 ## Theming and text
 
-Colors come from the ambient `ColorScheme` (`surface`, `primaryContainer`,
-`onPrimaryContainer`, `surfaceContainerHighest`) and text from `TextTheme`
-(`labelLarge` for chips, `titleMedium` for titles). Override text with
+Surfaces come from the ambient `ColorScheme`; the default accent is neutral
+grey. Text comes from `TextTheme` (`labelLarge` for chips, `titleMedium` for
+titles). Override text with
 `chipTextStyle`, `selectedChipTextStyle`, `sectionTitleStyle` and
 `panelTitleStyle`.
 
 Labels are English by default. Pass `SectionedChipScrollLabels` to translate
 the button tooltips, picker title and the chip position label
 (`'Fruit, 2 of 5'`).
+
+Both picker headings default to empty. Set `labels.panelTitle` or
+`labels.categoryPanelTitle` and `panelTitleStyle` to supply them.
+`labels.expand`, `labels.collapse`, and
+`labels.barrier` label the expand, collapse, and scrim actions. Category
+pickers use `changeCategory`, `categoryPanelTitle`, and `categoryBarrier`.
+
+`SectionedChipScrollStyle.outlined` exposes chip appearance through
+`chipTextStyle`, `selectedChipTextStyle`, `chipBackground`,
+`selectedChipBackground`, `selectedChipBorder` (`BorderSide`), `chipShape`,
+`chipMinHeight` (at least 48), and `chipPadding`. Panel hooks are
+`panelBackground`, `panelBottomRadius`, `panelElevation`, `panelShadowColor`,
+`scrimColor`, and `scrimOpacity`. Section title styling uses
+`sectionTitleStyle`; item widgets remain caller-owned.
+
+`PickerTransition.clipReveal` replaces `anchoredSpring` and is now the
+default: a 400ms top-to-bottom clip, with ease-out open and ease-in-out
+close. `PickerTransition.none` and system reduced motion use an instant
+change. The panel covers the bar; its collapse arrow uses the expand
+arrow's 48×48 slot.
 
 ## Accessibility
 
@@ -118,17 +141,22 @@ the button tooltips, picker title and the chip position label
 
 ## Behavior notes
 
-- A jump to a section that is not laid out yet first lands on an estimate,
-  then measures and corrects (up to three times). If it still cannot align,
-  it reports through `FlutterError.reportError`.
+- A jump measures the real lazy-layout prefix before moving, then animates
+  smoothly to the section title at the list viewport top. The selected
+  chip stays unchanged during motion and updates once on arrival.
 - When the last sections are too short to reach the top, a jump ends at the
   bottom of the list and that section stays selected until the list leaves
   the bottom.
 - A chip tap during a jump starts the new jump at once: the chip bar is not
   part of the scrolling list.
-- Touching the list during a jump stops the jump. The underlying
-  `scrollview_observer` scroll can still finish its current step.
+- Touching or dragging the list during a jump cancels navigation and returns
+  control to scroll-spy. Reduced motion moves to the measured target instantly.
+- The bar keeps the selected chip fully visible, with its leading edge about
+  48 logical pixels from the start, clamped to its scroll range and chip width.
 
 ## Example
 
-See `example/` for a demo where every option can be switched at run time.
+Run `cd example && fvm flutter run`. The home buttons `few`, `flow`, `many`,
+and `long` open 3-, 7-, 35-section and mixed-name scenes. Each screen has a
+`scale 1.0` / `scale 3.12` button. The bottom strip demonstrates the panel's
+reserved inset. Flow and many labels are unique for semantics-based replay.

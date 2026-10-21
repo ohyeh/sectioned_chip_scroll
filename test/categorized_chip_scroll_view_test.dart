@@ -20,6 +20,7 @@ CategorizedChipScrollView<int> _view(
   CategorizedChipScrollConfig config = const CategorizedChipScrollConfig(),
   ValueChanged<SectionCategory<int>>? onCategorySelected,
 }) => CategorizedChipScrollView<int>(
+  labels: const SectionedChipScrollLabels(categoryPanelTitle: 'Categories'),
   categories: categories,
   itemBuilder: testItem,
   config: config,
@@ -50,6 +51,119 @@ bool _focused(String text) {
 }
 
 void main() {
+  group('stage 2 category picker', () {
+    for (final action in [
+      'pick',
+      'barrier',
+      'back',
+      'stale-data',
+      'stale-geometry',
+    ]) {
+      testWidgets('close then valid pick only: $action', (tester) async {
+        var categories = _abc;
+        var scale = 3.12;
+        final picked = <String>[];
+        Widget scene() => testApp(
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(scale)),
+              child: SizedBox(
+                width: 390,
+                child: CategorizedChipScrollView<int>(
+                  labels: const SectionedChipScrollLabels(
+                    categoryPanelTitle: 'Categories',
+                  ),
+                  categories: categories,
+                  itemBuilder: testItem,
+                  style: const SectionedChipScrollStyle.outlined(
+                    pickerTransition: PickerTransition.clipReveal,
+                  ),
+                  onCategorySelected: (c) => picked.add(c.id),
+                ),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpWidget(scene());
+        await tester.pumpAndSettle();
+        await tester.tap(find.byIcon(Icons.unfold_more));
+        await tester.pumpAndSettle();
+        final route =
+            ModalRoute.of(tester.element(find.text('Categories')))!
+                as TransitionRoute<void>;
+        if (action == 'barrier') {
+          await tester.tapAt(const Offset(780, 590));
+        } else if (action == 'back') {
+          Navigator.of(tester.element(find.text('Categories'))).pop();
+        } else {
+          await tester.tap(find.text('Cat B').last);
+        }
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 80));
+        expect(route.animation!.value, inExclusiveRange(0, 1));
+        expect(picked, isEmpty);
+        if (action == 'stale-data') {
+          categories = [
+            _abc[0],
+            _cat('B', testSections([3, 2, 2], 'B')),
+            _abc[2],
+          ];
+          await tester.pumpWidget(scene());
+        } else if (action == 'stale-geometry') {
+          scale = 3;
+          await tester.pumpWidget(scene());
+        }
+        await tester.pumpAndSettle();
+        expect(picked, action == 'pick' ? ['B'] : isEmpty);
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('picker pick succeeds when style is rebuilt inline', (
+      tester,
+    ) async {
+      var scale = 3.12;
+      final picked = <String>[];
+      var seed = 0;
+      Widget scene() => testApp(
+        Builder(
+          builder: (context) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(scale)),
+            child: SizedBox(
+              width: 390,
+              child: CategorizedChipScrollView<int>(
+                labels: const SectionedChipScrollLabels(
+                  categoryPanelTitle: 'Categories',
+                ),
+                categories: _abc,
+                itemBuilder: testItem,
+                style: SectionedChipScrollStyle.outlined(
+                  accentColor: seed % 2 == 0 ? Colors.red : Colors.blue,
+                  pickerTransition: PickerTransition.clipReveal,
+                ),
+                onCategorySelected: (c) => picked.add(c.id),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(scene());
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.unfold_more));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cat B').last);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 80));
+      seed++;
+      await tester.pumpWidget(scene());
+      await tester.pumpAndSettle();
+      expect(picked, ['B']);
+    });
+  });
   group('rail', () {
     testWidgets('one category shows no tabs unless showRailWhenSingle', (
       tester,
@@ -300,6 +414,8 @@ void main() {
       await tester.tap(find.byIcon(Icons.unfold_more));
       await tester.pumpAndSettle();
       expect(find.text('Categories'), findsOneWidget);
+      await tester.ensureVisible(find.text('Cat C').last);
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Cat C').last);
       await tester.pumpAndSettle();
       expect(find.text('Categories'), findsNothing);
@@ -485,6 +601,9 @@ void main() {
       await tester.pumpWidget(
         testApp(
           CategorizedChipScrollView<int>(
+            labels: const SectionedChipScrollLabels(
+              categoryPanelTitle: 'Categories',
+            ),
             categories: _abc,
             itemBuilder: testItem,
             onSectionSelected: (s) => sections.add(s.label),

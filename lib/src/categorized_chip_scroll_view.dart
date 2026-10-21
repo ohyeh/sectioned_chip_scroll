@@ -1,11 +1,14 @@
 import 'dart:ui' show SemanticsRole;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:sectioned_chip_scroll/src/chip_section.dart';
 import 'package:sectioned_chip_scroll/src/common.dart';
 import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_config.dart';
 import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_view.dart';
+import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_style.dart';
+import 'package:sectioned_chip_scroll/src/sectioned_layout.dart';
 
 /// Two levels: category tabs (level 1) that switch a
 /// [SectionedChipScrollView] (level 2).
@@ -29,6 +32,10 @@ class CategorizedChipScrollView<T> extends StatefulWidget {
     super.key,
     required this.categories,
     required this.itemBuilder,
+    this.layout = const SectionedLayout.grid(),
+    this.style = const SectionedChipScrollStyle.outlined(),
+    this.sectionDecoration,
+    this.railItemBuilder,
     this.config = const CategorizedChipScrollConfig(),
     this.labels = const SectionedChipScrollLabels(),
     this.onCategorySelected,
@@ -39,13 +46,30 @@ class CategorizedChipScrollView<T> extends StatefulWidget {
     this.selectedChipTextStyle,
     this.sectionTitleStyle,
     this.panelTitleStyle,
-  });
+  }) : assert(
+         columnsBuilder == null ||
+             (layout is SectionedGridLayout && layout is! SectionedListLayout),
+         'columnsBuilder cannot be set when layout is a custom or list layout ($layout)',
+       );
 
   /// The categories, in display order.
   final List<SectionCategory<T>> categories;
 
   /// See [SectionedChipScrollView.itemBuilder].
   final Widget Function(BuildContext context, T item) itemBuilder;
+
+  /// Layout passed to the selected category's sections view.
+  final SectionedLayout layout;
+
+  /// Shared rail, chip and header values.
+  final SectionedChipScrollStyle style;
+
+  /// Decoration passed to the sections view.
+  final Decoration? sectionDecoration;
+
+  /// Visual only. The package owns semantics, focus and the tap target.
+  final Widget Function(BuildContext, SectionCategory<T>, bool)?
+  railItemBuilder;
 
   /// Product switches. See [CategorizedChipScrollConfig].
   final CategorizedChipScrollConfig config;
@@ -97,7 +121,22 @@ class _CategorizedChipScrollViewState<T>
   // tabs, picker) by reparenting them.
   final _viewKey = GlobalKey();
   final _tabsKey = GlobalKey();
+  final _categoryBarKey = GlobalKey();
   Route<void>? _pickerRoute;
+  int _pickerRevision = 0;
+  (Size, TextScaler, TextDirection)? _pickerEnvironment;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _pickerRevision++;
+  }
+
+  @override
+  void dispose() {
+    _pickerRevision++;
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -109,6 +148,12 @@ class _CategorizedChipScrollViewState<T>
   @override
   void didUpdateWidget(CategorizedChipScrollView<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!_sameCategories(oldWidget.categories, widget.categories) ||
+        oldWidget.layout != widget.layout ||
+        oldWidget.sectionDecoration != widget.sectionDecoration ||
+        oldWidget.config != widget.config) {
+      _pickerRevision++;
+    }
     _assertIds();
     final picker = _pickerRoute;
     if (picker != null &&
@@ -145,6 +190,26 @@ class _CategorizedChipScrollViewState<T>
         a.length,
       ).every((i) => a[i].id == b[i].id && a[i].label == b[i].label);
 
+  static bool _sameCategories<S>(
+    List<SectionCategory<S>> a,
+    List<SectionCategory<S>> b,
+  ) {
+    if (!_sameTitles(a, b)) return false;
+    for (var i = 0; i < a.length; i++) {
+      final x = a[i].sections;
+      final y = b[i].sections;
+      if (x.length != y.length) return false;
+      for (var j = 0; j < x.length; j++) {
+        if (x[j].id != y[j].id ||
+            x[j].label != y[j].label ||
+            !listEquals(x[j].items, y[j].items)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   void _assertIds() {
     assert(
       uniqueIds(widget.categories.map((c) => c.id)),
@@ -160,6 +225,7 @@ class _CategorizedChipScrollViewState<T>
   }
 
   void _activate(String id) {
+    _pickerRevision++;
     final category = widget.categories.where((c) => c.id == id).firstOrNull;
     if (category == null || id == _categoryId) return;
     final keep = widget.config.keepCategoryState;
@@ -183,28 +249,41 @@ class _CategorizedChipScrollViewState<T>
   }
 
   Future<void> _openPicker(BuildContext context) async {
+    final revision = ++_pickerRevision;
     final categories = widget.categories;
     final selectedId = _categoryId;
+    String? picked;
     final route = pickerRoute(
       context,
       barrierLabel: widget.labels.categoryBarrier,
       maxTextScale: widget.config.sectionConfig.maxTextScale,
+      style: widget.style,
+      anchor: () => _categoryBarKey.currentContext == null
+          ? null
+          : pickerAnchor(_categoryBarKey.currentContext!),
+      bottomInset: widget.config.sectionConfig.panelBottomInset,
       builder: (ctx) => _CategoryPanel(
         categories: categories,
         selectedIndex: categories.indexWhere((c) => c.id == selectedId),
         labels: widget.labels,
-        textStyle: widget.chipTextStyle,
-        selectedTextStyle: widget.selectedChipTextStyle,
-        titleStyle: widget.panelTitleStyle,
+        style: widget.style,
+        textStyle: widget.chipTextStyle ?? widget.style.chipTextStyle,
+        selectedTextStyle:
+            widget.selectedChipTextStyle ?? widget.style.selectedChipTextStyle,
+        titleStyle: widget.panelTitleStyle ?? widget.style.panelTitleStyle,
         onPick: (i) {
+          picked = categories[i].id;
           Navigator.of(ctx).pop();
-          if (mounted) _activate(categories[i].id);
         },
       ),
     );
     _pickerRoute = route;
     await Navigator.of(context).push(route);
+    await route.completed;
     if (_pickerRoute == route) _pickerRoute = null;
+    if (mounted && revision == _pickerRevision && picked != null) {
+      _activate(picked!);
+    }
   }
 
   Widget _sectionsView(SectionCategory<T> category) {
@@ -220,6 +299,9 @@ class _CategorizedChipScrollViewState<T>
           sections: category.sections,
           initialSectionId: keep ? _savedSection[id] : null,
           itemBuilder: widget.itemBuilder,
+          layout: widget.layout,
+          style: widget.style,
+          sectionDecoration: widget.sectionDecoration,
           config: widget.config.sectionConfig,
           labels: widget.labels,
           onSectionTap: widget.onSectionTap,
@@ -239,6 +321,13 @@ class _CategorizedChipScrollViewState<T>
 
   @override
   Widget build(BuildContext context) {
+    final environment = (
+      MediaQuery.sizeOf(context),
+      MediaQuery.textScalerOf(context),
+      Directionality.of(context),
+    );
+    if (_pickerEnvironment != environment) _pickerRevision++;
+    _pickerEnvironment = environment;
     final category = _category;
     if (category == null) return const SizedBox.shrink();
     final config = widget.config;
@@ -277,8 +366,18 @@ class _CategorizedChipScrollViewState<T>
             selectedIndex: selectedIndex,
             axis: axis,
             labels: widget.labels,
-            textStyle: widget.chipTextStyle,
-            selectedTextStyle: widget.selectedChipTextStyle,
+            style: widget.style,
+            visualBuilder: widget.railItemBuilder == null
+                ? null
+                : (context, index, selected) => widget.railItemBuilder!(
+                    context,
+                    widget.categories[index],
+                    selected,
+                  ),
+            textStyle: widget.chipTextStyle ?? widget.style.chipTextStyle,
+            selectedTextStyle:
+                widget.selectedChipTextStyle ??
+                widget.style.selectedChipTextStyle,
             onActivate: (i) => _activate(widget.categories[i].id),
           ),
         );
@@ -302,6 +401,8 @@ class _CategorizedChipScrollViewState<T>
               ordered(
                 0,
                 _CategoryButton(
+                  key: _categoryBarKey,
+                  scrollStyle: widget.style,
                   label: category.label,
                   semanticsLabel: widget.labels.position(
                     category.label,
@@ -309,7 +410,9 @@ class _CategorizedChipScrollViewState<T>
                     widget.categories.length,
                   ),
                   hint: widget.labels.changeCategory,
-                  textStyle: widget.selectedChipTextStyle,
+                  textStyle:
+                      widget.selectedChipTextStyle ??
+                      widget.style.categoryTextStyle,
                   onTap: () => _openPicker(context),
                 ),
               ),
@@ -337,6 +440,8 @@ class _CategoryTabs extends StatefulWidget {
     required this.onActivate,
     this.textStyle,
     this.selectedTextStyle,
+    required this.style,
+    this.visualBuilder,
   });
 
   final List<SectionCategory<Object?>> categories;
@@ -346,6 +451,8 @@ class _CategoryTabs extends StatefulWidget {
   final ValueChanged<int> onActivate;
   final TextStyle? textStyle;
   final TextStyle? selectedTextStyle;
+  final SectionedChipScrollStyle style;
+  final Widget Function(BuildContext, int, bool)? visualBuilder;
 
   @override
   State<_CategoryTabs> createState() => _CategoryTabsState();
@@ -453,6 +560,12 @@ class _CategoryTabsState extends State<_CategoryTabs> {
                         n,
                       ),
                       selected: i == widget.selectedIndex,
+                      style: widget.style,
+                      visual: widget.visualBuilder?.call(
+                        context,
+                        i,
+                        i == widget.selectedIndex,
+                      ),
                       focusNode: _node(widget.categories[i].id)
                         ..skipTraversal = i != roving,
                       vertical: vertical,
@@ -482,9 +595,10 @@ class _CategoryTab extends StatelessWidget {
     required this.vertical,
     required this.onTap,
     this.focusNode,
-    this.asButton = false,
     this.textStyle,
     this.selectedTextStyle,
+    this.style = const SectionedChipScrollStyle.outlined(),
+    this.visual,
   });
 
   final String label;
@@ -492,58 +606,73 @@ class _CategoryTab extends StatelessWidget {
   final bool selected;
   final FocusNode? focusNode;
 
-  /// A picker row: a button with a selected state, not a tab.
-  final bool asButton;
   final bool vertical;
   final VoidCallback onTap;
   final TextStyle? textStyle;
   final TextStyle? selectedTextStyle;
+  final SectionedChipScrollStyle style;
+  final Widget? visual;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     return MergeSemantics(
       child: Semantics(
-        role: asButton ? null : SemanticsRole.tab,
-        button: asButton,
+        role: SemanticsRole.tab,
         selected: selected,
         label: semanticsLabel,
         excludeSemantics: true,
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(4),
-          child: Material(
-            color: selected ? scheme.primaryContainer : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-            clipBehavior: Clip.antiAlias,
-            child: InkWell(
-              focusNode: focusNode,
-              onTap: onTap,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  minHeight: 48,
-                  maxWidth: vertical ? double.infinity : 160,
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
+          child: PressFeedback(
+            style: style,
+            child: Material(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                splashFactory: NoSplash.splashFactory,
+                highlightColor: Colors.transparent,
+                focusNode: focusNode,
+                onTap: onTap,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    minHeight: 48,
+                    maxWidth: vertical ? double.infinity : 160,
                   ),
-                  child: Align(
-                    alignment: vertical
-                        ? AlignmentDirectional.centerStart
-                        : Alignment.center,
-                    widthFactor: vertical ? null : 1,
-                    child: Text(
-                      label,
-                      textAlign: vertical ? TextAlign.start : TextAlign.center,
-                      style: chipLabelStyle(
-                        theme,
-                        selected: selected,
-                        textStyle: textStyle,
-                        selectedTextStyle: selectedTextStyle,
-                      ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: Align(
+                      alignment: vertical
+                          ? AlignmentDirectional.centerStart
+                          : Alignment.center,
+                      widthFactor: vertical ? null : 1,
+                      child: visual == null
+                          ? Text(
+                              label,
+                              textAlign: vertical
+                                  ? TextAlign.start
+                                  : TextAlign.center,
+                              style: chipLabelStyle(
+                                theme,
+                                selected: selected,
+                                textStyle: textStyle,
+                                selectedTextStyle: TextStyle(
+                                  color: style.selectedForeground(
+                                    theme.colorScheme.surface,
+                                  ),
+                                ).merge(selectedTextStyle),
+                              ),
+                            )
+                          : ExcludeSemantics(
+                              child: ExcludeFocus(
+                                child: IgnorePointer(child: visual!),
+                              ),
+                            ),
                     ),
                   ),
                 ),
@@ -559,11 +688,13 @@ class _CategoryTab extends StatelessWidget {
 /// The current category as one button; it opens the category picker.
 class _CategoryButton extends StatelessWidget {
   const _CategoryButton({
+    super.key,
     required this.label,
     required this.semanticsLabel,
     required this.hint,
     required this.onTap,
     this.textStyle,
+    required this.scrollStyle,
   });
 
   final String label;
@@ -571,12 +702,14 @@ class _CategoryButton extends StatelessWidget {
   final String hint;
   final VoidCallback onTap;
   final TextStyle? textStyle;
+  final SectionedChipScrollStyle scrollStyle;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final style = (theme.textTheme.titleSmall ?? const TextStyle()).merge(
-      textStyle,
+    final style = scaledTitleStyle(
+      context,
+      (theme.textTheme.titleSmall ?? const TextStyle()).merge(textStyle),
     );
     return Semantics(
       button: true,
@@ -584,20 +717,47 @@ class _CategoryButton extends StatelessWidget {
       hint: hint,
       excludeSemantics: true,
       onTap: onTap,
-      child: Material(
-        color: theme.colorScheme.surfaceContainerLow,
-        child: InkWell(
-          onTap: onTap,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 48),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Expanded(child: Text(label, style: style)),
-                  // A different icon from the chip bar's expand button.
-                  Icon(Icons.unfold_more, size: style.fontSize ?? 16),
-                ],
+      child: HeaderMaterial(
+        style: scrollStyle,
+        child: PressFeedback(
+          style: scrollStyle,
+          child: InkWell(
+            splashFactory: NoSplash.splashFactory,
+            highlightColor: Colors.transparent,
+            onTap: onTap,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Padding(
+                padding: EdgeInsets.zero,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        child: Text(
+                          label,
+                          style: style,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                    // A different icon from the chip bar's expand button.
+                    SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: IconButton(
+                        tooltip: hint,
+                        icon: const Icon(Icons.unfold_more),
+                        onPressed: onTap,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -616,6 +776,7 @@ class _CategoryPanel extends StatelessWidget {
     this.textStyle,
     this.selectedTextStyle,
     this.titleStyle,
+    required this.style,
   });
 
   final List<SectionCategory<Object?>> categories;
@@ -625,30 +786,36 @@ class _CategoryPanel extends StatelessWidget {
   final TextStyle? textStyle;
   final TextStyle? selectedTextStyle;
   final TextStyle? titleStyle;
+  final SectionedChipScrollStyle style;
 
   @override
   Widget build(BuildContext context) {
     final n = categories.length;
     return PickerPanel(
+      style: style,
       title: labels.categoryPanelTitle,
       titleStyle: titleStyle,
       closeLabel: labels.collapse,
-      closeIcon: Icons.close,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var i = 0; i < n; i++)
-            _CategoryTab(
-              label: categories[i].label,
-              semanticsLabel: labels.position(categories[i].label, i + 1, n),
-              selected: i == selectedIndex,
-              vertical: true,
-              asButton: true,
-              textStyle: textStyle,
-              selectedTextStyle: selectedTextStyle,
-              onTap: () => onPick(i),
-            ),
-        ],
+      closeIcon: Icons.expand_less,
+      child: LayoutBuilder(
+        builder: (context, box) => Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var i = 0; i < n; i++)
+              ChipControl(
+                maxWidth: box.maxWidth,
+                label: categories[i].label,
+                semanticsLabel: labels.position(categories[i].label, i + 1, n),
+                selected: i == selectedIndex,
+                style: style,
+                semantics: ChipSemantics.link,
+                textStyle: textStyle,
+                selectedTextStyle: selectedTextStyle,
+                onTap: () => onPick(i),
+              ),
+          ],
+        ),
       ),
     );
   }

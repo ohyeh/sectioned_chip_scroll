@@ -43,17 +43,22 @@ class SectionedChipScrollConfig {
     this.showChipFade = true,
     this.maxTextScale,
     this.focusAfterNavigate = FocusAfterNavigate.preserve,
+    this.panelBottomInset = 0,
   }) : assert(
          maxTextScale == null ||
              (maxTextScale > 0 && maxTextScale < double.infinity),
          'maxTextScale must be a positive finite number',
-       );
+       ),
+       assert(panelBottomInset >= 0 && panelBottomInset < double.infinity);
+
+  /// Reserved space from the Navigator bottom (for example a bottom bar).
+  /// The picker leaves another 80 logical pixels of visible scrim above it.
+  final double panelBottomInset;
 
   /// How screen readers expose each chip.
   final ChipSemantics chipSemantics;
 
-  /// Shows the button at the end of the chip bar that opens a picker with
-  /// every section.
+  /// Allows the picker button when the chips do not all fit in the bar.
   final bool showExpandButton;
 
   /// Shows a chevron after each section title.
@@ -93,6 +98,7 @@ class SectionedChipScrollConfig {
     bool? showChipFade,
     ValueGetter<double?>? maxTextScale,
     FocusAfterNavigate? focusAfterNavigate,
+    double? panelBottomInset,
   }) => SectionedChipScrollConfig(
     chipSemantics: chipSemantics ?? this.chipSemantics,
     showExpandButton: showExpandButton ?? this.showExpandButton,
@@ -101,6 +107,7 @@ class SectionedChipScrollConfig {
     showChipFade: showChipFade ?? this.showChipFade,
     maxTextScale: maxTextScale != null ? maxTextScale() : this.maxTextScale,
     focusAfterNavigate: focusAfterNavigate ?? this.focusAfterNavigate,
+    panelBottomInset: panelBottomInset ?? this.panelBottomInset,
   );
 
   @override
@@ -112,7 +119,8 @@ class SectionedChipScrollConfig {
       other.showEmptySections == showEmptySections &&
       other.showChipFade == showChipFade &&
       other.maxTextScale == maxTextScale &&
-      other.focusAfterNavigate == focusAfterNavigate;
+      other.focusAfterNavigate == focusAfterNavigate &&
+      other.panelBottomInset == panelBottomInset;
 
   @override
   int get hashCode => Object.hash(
@@ -123,6 +131,7 @@ class SectionedChipScrollConfig {
     showChipFade,
     maxTextScale,
     focusAfterNavigate,
+    panelBottomInset,
   );
 }
 
@@ -226,10 +235,10 @@ class SectionedChipScrollLabels {
     this.expand = 'Show all sections',
     this.collapse = 'Close',
     this.barrier = 'Dismiss section picker',
-    this.panelTitle = 'Sections',
+    this.panelTitle = '',
     this.position = defaultSectionPositionLabel,
     this.changeCategory = 'Change category',
-    this.categoryPanelTitle = 'Categories',
+    this.categoryPanelTitle = '',
     this.categoryBarrier = 'Dismiss category picker',
   });
 
