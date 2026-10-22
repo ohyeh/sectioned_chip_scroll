@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sectioned_chip_scroll/sectioned_chip_scroll.dart';
-import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_view.dart'
+import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_view.dart'
     show ChipControl;
 
 // Exercise the shipped scene without a circular example dev dependency.

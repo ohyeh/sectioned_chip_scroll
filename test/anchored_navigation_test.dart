@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sectioned_chip_scroll/sectioned_chip_scroll.dart';
-import 'package:sectioned_chip_scroll/src/common.dart' show HeaderMaterial;
+import 'package:sectioned_chip_scroll/src/presentation/chrome.dart'
+    show HeaderMaterial;
 
 import 'helpers.dart';
 

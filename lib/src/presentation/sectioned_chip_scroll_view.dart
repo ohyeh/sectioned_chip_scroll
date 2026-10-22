@@ -2,11 +2,14 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerSignalEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:sectioned_chip_scroll/src/chip_section.dart';
-import 'package:sectioned_chip_scroll/src/common.dart';
-import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_config.dart';
-import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_style.dart';
-import 'package:sectioned_chip_scroll/src/sectioned_layout.dart';
+import 'package:sectioned_chip_scroll/src/domain/chip_section.dart';
+import 'package:sectioned_chip_scroll/src/presentation/picker.dart';
+import 'package:sectioned_chip_scroll/src/presentation/motion.dart';
+import 'package:sectioned_chip_scroll/src/presentation/chrome.dart';
+import 'package:sectioned_chip_scroll/src/application/sectioned_chip_scroll_config.dart';
+import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_style.dart';
+import 'package:sectioned_chip_scroll/src/presentation/sectioned_layout.dart';
+import 'package:sectioned_chip_scroll/src/domain/section_geometry.dart';
 
 export 'sectioned_layout.dart' show SectionColumnsBuilder;
 
@@ -440,9 +443,7 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
       var stableFrames = 0;
       while (valid()) {
         final geometry = _geometry;
-        final section = geometry?.sections
-            .where((s) => s.id == id)
-            .firstOrNull;
+        final section = geometry?.sections.where((s) => s.id == id).firstOrNull;
         final liveTop = section?.top;
         if (geometry == null || section == null || liveTop == null) {
           await WidgetsBinding.instance.endOfFrame;
@@ -460,8 +461,7 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
           preparedEnd = s.top! + s.extent!;
         }
         final viewport = _scroll.position.viewportDimension;
-        final maxScroll =
-            (geometry.extent ?? preparedEnd) - viewport < 0
+        final maxScroll = (geometry.extent ?? preparedEnd) - viewport < 0
             ? 0.0
             : (geometry.extent ?? preparedEnd) - viewport;
         final target = (liveTop + section.insets.top).clamp(0.0, maxScroll);
@@ -860,7 +860,8 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
             widget.style,
             textStyle: widget.chipTextStyle ?? widget.style.chipTextStyle,
             selectedTextStyle:
-                widget.selectedChipTextStyle ?? widget.style.selectedChipTextStyle,
+                widget.selectedChipTextStyle ??
+                widget.style.selectedChipTextStyle,
           ),
         );
         final chipWidth = box.maxWidth - (showExpand ? buttonSize.width : 0);
@@ -1484,7 +1485,8 @@ class _Panel<T> extends StatelessWidget {
   Widget build(BuildContext context) {
     final count = sections.length;
     final rowHeight = chipMinimumHeight(
-      context, style,
+      context,
+      style,
       textStyle: chipTextStyle,
       selectedTextStyle: selectedChipTextStyle,
     );

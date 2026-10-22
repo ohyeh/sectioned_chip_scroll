@@ -3,12 +3,14 @@ import 'dart:ui' show SemanticsRole;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:sectioned_chip_scroll/src/chip_section.dart';
-import 'package:sectioned_chip_scroll/src/common.dart';
-import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_config.dart';
-import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_view.dart';
-import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_style.dart';
-import 'package:sectioned_chip_scroll/src/sectioned_layout.dart';
+import 'package:sectioned_chip_scroll/src/domain/chip_section.dart';
+import 'package:sectioned_chip_scroll/src/presentation/picker.dart';
+import 'package:sectioned_chip_scroll/src/presentation/motion.dart';
+import 'package:sectioned_chip_scroll/src/presentation/chrome.dart';
+import 'package:sectioned_chip_scroll/src/application/sectioned_chip_scroll_config.dart';
+import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_view.dart';
+import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_style.dart';
+import 'package:sectioned_chip_scroll/src/presentation/sectioned_layout.dart';
 
 /// Two levels: category tabs (level 1) that switch a
 /// [SectionedChipScrollView] (level 2).
@@ -406,7 +408,8 @@ class _CategorizedChipScrollViewState<T>
                   chipTextStyle:
                       widget.chipTextStyle ?? widget.style.chipTextStyle,
                   selectedChipTextStyle:
-                      widget.selectedChipTextStyle ?? widget.style.selectedChipTextStyle,
+                      widget.selectedChipTextStyle ??
+                      widget.style.selectedChipTextStyle,
                   label: category.label,
                   semanticsLabel: widget.labels.position(
                     category.label,
@@ -722,7 +725,8 @@ class _CategoryButton extends StatelessWidget {
     final buttonSize = pickerButtonSize(
       context,
       chipMinimumHeight(
-        context, scrollStyle,
+        context,
+        scrollStyle,
         textStyle: chipTextStyle,
         selectedTextStyle: selectedChipTextStyle,
       ),
@@ -809,7 +813,8 @@ class _CategoryPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final n = categories.length;
     final rowHeight = chipMinimumHeight(
-      context, style,
+      context,
+      style,
       textStyle: textStyle,
       selectedTextStyle: selectedTextStyle,
     );

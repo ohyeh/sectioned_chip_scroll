@@ -48,3 +48,9 @@ class SectionCategory<T> {
   /// Sections shown when this category is selected.
   final List<ChipSection<T>> sections;
 }
+
+/// Whether [ids] are all non-empty and unique; for asserts.
+bool uniqueIds(Iterable<String> ids) {
+  final seen = <String>{};
+  return ids.every((id) => id.isNotEmpty && seen.add(id));
+}

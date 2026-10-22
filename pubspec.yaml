@@ -2,7 +2,7 @@ name: sectioned_chip_scroll
 description: >-
   Scroll-spy chip bar for sectioned lists: pinned chips track the visible
   section, tap to jump, overlay picker, accessible up to the largest text size.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/ohyeh/sectioned_chip_scroll
 issue_tracker: https://github.com/ohyeh/sectioned_chip_scroll/issues
 topics:
