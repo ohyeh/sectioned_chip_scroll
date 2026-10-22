@@ -32,7 +32,7 @@ class CategorizedChipScrollView<T> extends StatefulWidget {
     super.key,
     required this.categories,
     required this.itemBuilder,
-    this.layout = const SectionedLayout.grid(),
+    this.layout = const SectionedLayout.list(),
     this.style = const SectionedChipScrollStyle.outlined(),
     this.sectionDecoration,
     this.railItemBuilder,
@@ -403,6 +403,10 @@ class _CategorizedChipScrollViewState<T>
                 _CategoryButton(
                   key: _categoryBarKey,
                   scrollStyle: widget.style,
+                  chipTextStyle:
+                      widget.chipTextStyle ?? widget.style.chipTextStyle,
+                  selectedChipTextStyle:
+                      widget.selectedChipTextStyle ?? widget.style.selectedChipTextStyle,
                   label: category.label,
                   semanticsLabel: widget.labels.position(
                     category.label,
@@ -695,6 +699,8 @@ class _CategoryButton extends StatelessWidget {
     required this.onTap,
     this.textStyle,
     required this.scrollStyle,
+    required this.chipTextStyle,
+    required this.selectedChipTextStyle,
   });
 
   final String label;
@@ -703,6 +709,8 @@ class _CategoryButton extends StatelessWidget {
   final VoidCallback onTap;
   final TextStyle? textStyle;
   final SectionedChipScrollStyle scrollStyle;
+  final TextStyle? chipTextStyle;
+  final TextStyle? selectedChipTextStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -710,6 +718,14 @@ class _CategoryButton extends StatelessWidget {
     final style = scaledTitleStyle(
       context,
       (theme.textTheme.titleSmall ?? const TextStyle()).merge(textStyle),
+    );
+    final buttonSize = pickerButtonSize(
+      context,
+      chipMinimumHeight(
+        context, scrollStyle,
+        textStyle: chipTextStyle,
+        selectedTextStyle: selectedChipTextStyle,
+      ),
     );
     return Semantics(
       button: true,
@@ -730,7 +746,7 @@ class _CategoryButton extends StatelessWidget {
               child: Padding(
                 padding: EdgeInsets.zero,
                 child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Expanded(
                       child: Padding(
@@ -748,9 +764,10 @@ class _CategoryButton extends StatelessWidget {
                     ),
                     // A different icon from the chip bar's expand button.
                     SizedBox(
-                      width: 48,
-                      height: 48,
+                      width: buttonSize.width,
+                      height: buttonSize.height,
                       child: IconButton(
+                        style: plainPickerButtonStyle,
                         tooltip: hint,
                         icon: const Icon(Icons.unfold_more),
                         onPressed: onTap,
@@ -791,8 +808,15 @@ class _CategoryPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final n = categories.length;
+    final rowHeight = chipMinimumHeight(
+      context, style,
+      textStyle: textStyle,
+      selectedTextStyle: selectedTextStyle,
+    );
     return PickerPanel(
       style: style,
+      minimumBodyHeight: rowHeight + 16,
+      buttonSize: pickerButtonSize(context, rowHeight),
       title: labels.categoryPanelTitle,
       titleStyle: titleStyle,
       closeLabel: labels.collapse,

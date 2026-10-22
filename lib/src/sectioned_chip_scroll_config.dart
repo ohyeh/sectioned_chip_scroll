@@ -52,7 +52,7 @@ class SectionedChipScrollConfig {
        assert(panelBottomInset >= 0 && panelBottomInset < double.infinity);
 
   /// Reserved space from the Navigator bottom (for example a bottom bar).
-  /// The picker leaves another 80 logical pixels of visible scrim above it.
+  /// The picker leaves another 80 logical pixels of scrim when space allows.
   final double panelBottomInset;
 
   /// How screen readers expose each chip.

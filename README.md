@@ -1,5 +1,13 @@
 # sectioned_chip_scroll
 
+Both views use `SectionedLayout.list()` by default, with one item per row.
+Pass `layout: const SectionedLayout.grid()` to opt into a grid.
+`columnsBuilder` is available only with an explicit grid layout.
+
+`SectionedChipScrollStyle.edgeFadeExtent` sets the panel bottom fade extent.
+The list top fade is capped at the section header's top padding (12 logical
+pixels), so a landed title stays fully visible.
+
 A scroll-spy chip bar for sectioned content in Flutter.
 
 - A row of chips above the list, one per section. Scrolling selects the
@@ -53,7 +61,7 @@ Behavior that differs between products is a switch in
 | `showEmptySections` | `false` | Show sections with no items. |
 | `maxTextScale` | `null` | Upper limit for text scale inside the view and picker. |
 | `focusAfterNavigate` | `preserve` | `announce` also reads the new section or category name once, where announcements are supported. |
-| `panelBottomInset` | `0` | Reserved height from the Navigator bottom; the panel leaves another 80 logical pixels of scrim. |
+| `panelBottomInset` | `0` | Reserved height from the Navigator bottom; the panel leaves another 80 logical pixels of scrim when space allows. |
 
 Callbacks on the widget:
 
@@ -121,7 +129,13 @@ pickers use `changeCategory`, `categoryPanelTitle`, and `categoryBarrier`.
 default: a 400ms top-to-bottom clip, with ease-out open and ease-in-out
 close. `PickerTransition.none` and system reduced motion use an instant
 change. The panel covers the bar; its collapse arrow uses the expand
-arrow's 48×48 slot.
+arrow's slot. The slot starts at 48×48 and grows with text scale and chip
+row height. Both arrows use a 16×8 chevron with a 1.6 stroke, scaled with
+text up to 2×. The buttons have no background or border.
+
+On short viewports the panel reduces the scrim reserve first to keep a chip
+row usable. If the heading and one chip row still do not fit, the heading
+scrolls with the chips.
 
 ## Accessibility
 
@@ -141,9 +155,10 @@ arrow's 48×48 slot.
 
 ## Behavior notes
 
-- A jump measures the real lazy-layout prefix before moving, then animates
-  smoothly to the section title at the list viewport top. The selected
-  chip stays unchanged during motion and updates once on arrival.
+- A jump starts while the picker closes and measures the lazy-layout prefix
+  as it moves. It updates the target from measured geometry and lands with
+  the title padding clear of the edge fade. The picked chip is selected at
+  once; scroll-spy stays paused until arrival or cancellation.
 - When the last sections are too short to reach the top, a jump ends at the
   bottom of the list and that section stays selected until the list leaves
   the bottom.

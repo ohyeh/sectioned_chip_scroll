@@ -2,6 +2,7 @@ import 'dart:ui' as ui;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/rendering.dart';
 import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_style.dart';
@@ -80,12 +81,10 @@ class _PickerRoute extends RawDialogRoute<void> {
                  final media = MediaQuery.of(context);
                  final top = anchor.top.clamp(0.0, media.size.height);
                  final left = anchor.left.clamp(0.0, media.size.width);
-                 final reserved =
-                     math.max(
-                       bottomInset,
-                       math.max(media.viewInsets.bottom, media.padding.bottom),
-                     ) +
-                     80;
+                 final reserved = math.max(
+                   bottomInset,
+                   math.max(media.viewInsets.bottom, media.padding.bottom),
+                 );
                  return Padding(
                    padding: EdgeInsets.only(
                      top: top,
@@ -144,17 +143,29 @@ class _LivePickerAnchor extends StatefulWidget {
 class _LivePickerAnchorState extends State<_LivePickerAnchor> {
   late Rect _anchor = widget.anchor()!;
 
-  @override
-  Widget build(BuildContext context) {
-    // The opener lays out after route build on resize; read its new bounds
-    // after layout, then rebuild only if those bounds changed.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final next = widget.anchor();
-      if (next != null && next != _anchor) setState(() => _anchor = next);
-    });
-    return widget.builder(context, _anchor);
+  void _checkAnchor(Duration _) {
+    if (!mounted) return;
+    final anchor = widget.anchor();
+    if (anchor != null && anchor != _anchor) {
+      setState(() => _anchor = anchor);
+    }
+    WidgetsBinding.instance.addPostFrameCallback(_checkAnchor);
   }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback(_checkAnchor);
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, _) {
+      // The opener has its new bounds during layout, before this frame paints.
+      _anchor = widget.anchor() ?? _anchor;
+      return widget.builder(context, _anchor);
+    },
+  );
 }
 
 /// A scalar spring that retargets from its presentation value and velocity.
@@ -377,6 +388,105 @@ TextStyle chipLabelStyle(
       : base;
 }
 
+/// Height of one chip row at the current scale, before body padding.
+double chipMinimumHeight(
+  BuildContext context,
+  SectionedChipScrollStyle style, {
+  TextStyle? textStyle,
+  TextStyle? selectedTextStyle,
+}) {
+  var height = style.chipMinHeight;
+  for (final selected in [false, true]) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: 'M',
+        style: chipLabelStyle(
+          Theme.of(context),
+          selected: selected,
+          textStyle: textStyle,
+          selectedTextStyle: selectedTextStyle,
+        ),
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    height = math.max(
+      height,
+      painter.height +
+          style.chipPadding.resolve(Directionality.of(context)).vertical,
+    );
+    painter.dispose();
+  }
+  return height;
+}
+
+/// Scale of the board chevron, independent of the label's maximum size.
+double pickerChevronScale(BuildContext context) =>
+    (MediaQuery.textScalerOf(context).scale(16) / 16).clamp(0.0, 2.0);
+
+/// Shared end slot for a picker trigger and its close button.
+Size pickerButtonSize(BuildContext context, double rowHeight) => Size(
+  math.max(48, 16 * pickerChevronScale(context) + 24),
+  math.max(48, rowHeight),
+);
+
+/// Plain picker controls keep their existing focus and press feedback.
+final plainPickerButtonStyle = IconButton.styleFrom(
+  backgroundColor: Colors.transparent,
+  side: BorderSide.none,
+  padding: EdgeInsets.zero,
+  minimumSize: const Size(48, 48),
+  splashFactory: NoSplash.splashFactory,
+);
+
+/// An icon identifier with the board's vector instead of a font glyph.
+class PickerChevron extends Icon {
+  /// Draws the expand or collapse chevron.
+  const PickerChevron(super.icon, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = pickerChevronScale(context);
+    return Center(
+      widthFactor: 1,
+      heightFactor: 1,
+      child: CustomPaint(
+        size: Size(16 * scale, 8 * scale),
+        painter: _PickerChevronPainter(icon == Icons.expand_less),
+      ),
+    );
+  }
+}
+
+class _PickerChevronPainter extends CustomPainter {
+  const _PickerChevronPainter(this.up);
+  final bool up;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 16, size.height / 8);
+    final path = Path()
+      ..moveTo(1, up ? 7 : 1)
+      ..lineTo(8, up ? 1 : 7)
+      ..lineTo(15, up ? 7 : 1);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = const Color(0xFF2C2A2D)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_PickerChevronPainter oldDelegate) => up != oldDelegate.up;
+}
+
 /// The shell of a picker: a title, a close button and a scrolling body.
 class PickerPanel extends StatefulWidget {
   /// Creates a picker shell.
@@ -386,6 +496,9 @@ class PickerPanel extends StatefulWidget {
     required this.closeLabel,
     required this.closeIcon,
     required this.child,
+    required this.minimumBodyHeight,
+    required this.buttonSize,
+    this.triggerRowHeight,
     this.titleStyle,
     this.style = const SectionedChipScrollStyle.outlined(),
   });
@@ -402,6 +515,15 @@ class PickerPanel extends StatefulWidget {
   /// Picker body.
   final Widget child;
 
+  /// Height of one chip row, including the body padding.
+  final double minimumBodyHeight;
+
+  /// Same end slot as the trigger, independent of the panel title height.
+  final Size buttonSize;
+
+  /// Section bar height when the close button must occupy the trigger's slot.
+  final double? triggerRowHeight;
+
   /// Merged over `textTheme.titleMedium`.
   final TextStyle? titleStyle;
 
@@ -412,8 +534,53 @@ class PickerPanel extends StatefulWidget {
   State<PickerPanel> createState() => _PickerPanelState();
 }
 
+class _PickerScrollController extends ScrollController {
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) => _PickerScrollPosition(
+    physics: physics,
+    context: context,
+    oldPosition: oldPosition,
+  );
+}
+
+class _PickerScrollPosition extends ScrollPositionWithSingleContext {
+  _PickerScrollPosition({
+    required super.physics,
+    required super.context,
+    super.oldPosition,
+  });
+
+  @override
+  bool get shouldIgnorePointer {
+    final current = activity;
+    final slop = computeHitSlop(
+      ui.PointerDeviceKind.touch,
+      MediaQuery.maybeGestureSettingsOf(context.storageContext),
+    );
+    // Below one touch slop per 60Hz frame, a tap should pick rather than stop.
+    if (current is BallisticScrollActivity &&
+        current.velocity.abs() < slop * 60) {
+      return false;
+    }
+    return super.shouldIgnorePointer;
+  }
+
+  @override
+  double setPixels(double newPixels) {
+    final overscroll = super.setPixels(newPixels);
+    if (activity is BallisticScrollActivity) {
+      context.setIgnorePointer(shouldIgnorePointer);
+    }
+    return overscroll;
+  }
+}
+
 class _PickerPanelState extends State<PickerPanel> {
-  final _scroll = ScrollController();
+  final _scroll = _PickerScrollController();
 
   @override
   void dispose() {
@@ -425,30 +592,44 @@ class _PickerPanelState extends State<PickerPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final style = widget.style;
-    return Material(
-      key: const ValueKey('sectioned_chip_scroll.panel'),
-      color: style.panelBackground ?? theme.colorScheme.surface,
-      elevation: style.panelElevation,
-      shadowColor: style.panelShadowColor,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(
-          bottom: Radius.circular(style.panelBottomRadius),
-        ),
-        side: MediaQuery.highContrastOf(context)
-            ? BorderSide(color: theme.colorScheme.onSurface)
-            : BorderSide.none,
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
+    return LayoutBuilder(
+      builder: (context, box) {
+        final titleStyle = scaledTitleStyle(
+          context,
+          (theme.textTheme.titleMedium ?? const TextStyle()).merge(
+            widget.titleStyle,
+          ),
+        );
+        final painter = TextPainter(
+          text: TextSpan(text: widget.title, style: titleStyle),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+          maxLines: 1,
+        )..layout(
+          maxWidth: math.max(0, box.maxWidth - widget.buttonSize.width - 24),
+        );
+        final headerHeight =
+            widget.triggerRowHeight ??
+            math.max(widget.buttonSize.height, painter.height + 24);
+        painter.dispose();
+        final minimumHeight = headerHeight + widget.minimumBodyHeight;
+        final reserve = math.min(
+          80.0,
+          math.max(0.0, box.maxHeight - minimumHeight),
+        );
+        final height = box.maxHeight - reserve;
+        final scrollHeader = height < minimumHeight;
+        final header = SizedBox(
+          height: headerHeight,
+          child: Row(
             key: const ValueKey('sectioned_chip_scroll.panelHeader'),
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsetsDirectional.all(12),
+                  padding: const EdgeInsetsDirectional.symmetric(
+                    horizontal: 12,
+                  ),
                   child: Semantics(
                     header: true,
                     child: Text(
@@ -465,80 +646,120 @@ class _PickerPanelState extends State<PickerPanel> {
                 ),
               ),
               SizedBox(
-                width: 48,
-                height: 48,
+                width: widget.buttonSize.width,
+                height: widget.buttonSize.height,
                 child: PressFeedback(
                   style: style,
                   child: IconButton(
-                    style: IconButton.styleFrom(
-                      splashFactory: NoSplash.splashFactory,
-                    ),
+                    style: plainPickerButtonStyle,
+                    iconSize: 16 * pickerChevronScale(context),
                     tooltip: widget.closeLabel,
-                    icon: Icon(widget.closeIcon),
+                    icon: PickerChevron(widget.closeIcon),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ),
               ),
             ],
           ),
-          Flexible(
-            child: Stack(
+        );
+        return ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: height),
+          child: Material(
+            key: const ValueKey('sectioned_chip_scroll.panel'),
+            color: style.panelBackground ?? theme.colorScheme.surface,
+            elevation: style.panelElevation,
+            shadowColor: style.panelShadowColor,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(
+                bottom: Radius.circular(style.panelBottomRadius),
+              ),
+              side: MediaQuery.highContrastOf(context)
+                  ? BorderSide(color: theme.colorScheme.onSurface)
+                  : BorderSide.none,
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                NotificationListener<ScrollMetricsNotification>(
-                  onNotification: (_) {
-                    WidgetsBinding.instance.addPostFrameCallback((_) {
-                      if (mounted) setState(() {});
-                    });
-                    return false;
-                  },
-                  child: Scrollbar(
-                    controller: _scroll,
-                    thumbVisibility: true,
-                    child: SingleChildScrollView(
-                      key: const ValueKey('sectioned_chip_scroll.panelScroll'),
-                      controller: _scroll,
-                      padding: const EdgeInsets.all(8),
-                      child: widget.child,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  height: style.edgeFadeExtent,
-                  child: IgnorePointer(
-                    child: ListenableBuilder(
-                      listenable: _scroll,
-                      builder: (context, _) => DecoratedBox(
-                        key: const ValueKey('sectioned_chip_scroll.panelFade'),
-                        decoration: BoxDecoration(
-                          gradient:
-                              _scroll.hasClients &&
-                                  _scroll.position.hasContentDimensions &&
-                                  _scroll.position.extentAfter > 0
-                              ? LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    (style.panelBackground ??
-                                            theme.colorScheme.surface)
-                                        .withValues(alpha: 0),
-                                    style.panelBackground ??
-                                        theme.colorScheme.surface,
-                                  ],
-                                )
-                              : null,
+                if (!scrollHeader) header,
+                Flexible(
+                  child: Stack(
+                    children: [
+                      NotificationListener<ScrollMetricsNotification>(
+                        onNotification: (_) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) setState(() {});
+                          });
+                          return false;
+                        },
+                        child: Scrollbar(
+                          controller: _scroll,
+                          thumbVisibility: true,
+                          child: SingleChildScrollView(
+                            key: const ValueKey(
+                              'sectioned_chip_scroll.panelScroll',
+                            ),
+                            controller: _scroll,
+                            padding: scrollHeader
+                                ? EdgeInsets.zero
+                                : const EdgeInsets.all(8),
+                            child: scrollHeader
+                                ? Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      header,
+                                      Padding(
+                                        padding: const EdgeInsets.all(8),
+                                        child: widget.child,
+                                      ),
+                                    ],
+                                  )
+                                : widget.child,
+                          ),
                         ),
                       ),
-                    ),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        height: style.edgeFadeExtent,
+                        child: IgnorePointer(
+                          child: ListenableBuilder(
+                            listenable: _scroll,
+                            builder: (context, _) => DecoratedBox(
+                              key: const ValueKey(
+                                'sectioned_chip_scroll.panelFade',
+                              ),
+                              decoration: BoxDecoration(
+                                gradient:
+                                    _scroll.hasClients &&
+                                        _scroll.position.hasContentDimensions &&
+                                        _scroll.position.extentAfter > 0
+                                    ? LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          (style.panelBackground ??
+                                                  theme.colorScheme.surface)
+                                              .withValues(alpha: 0),
+                                          style.panelBackground ??
+                                              theme.colorScheme.surface,
+                                        ],
+                                      )
+                                    : null,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

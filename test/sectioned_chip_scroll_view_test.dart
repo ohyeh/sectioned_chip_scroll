@@ -1,11 +1,15 @@
-import 'dart:ui' show SemanticsRole;
+import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sectioned_chip_scroll/sectioned_chip_scroll.dart';
 import 'package:sectioned_chip_scroll/src/common.dart'
     show HeaderMaterial, PressFeedback, SpringValue;
+import 'package:sectioned_chip_scroll/src/sectioned_chip_scroll_view.dart'
+    show ChipControl;
 
 import 'helpers.dart';
 
@@ -16,6 +20,7 @@ Widget _view(
   ValueChanged<ChipSection<int>>? onSectionSelected,
   SectionColumnsBuilder? columnsBuilder,
   Widget Function(BuildContext, int) itemBuilder = testItem,
+  SectionedLayout layout = const SectionedLayout.list(),
 }) => SizedBox(
   // Compact fixtures must overflow to exercise the picker rather than B2.
   width: sections.length <= 3 ? 280 : null,
@@ -27,6 +32,7 @@ Widget _view(
     onSectionTap: onSectionTap,
     onSectionSelected: onSectionSelected,
     columnsBuilder: columnsBuilder,
+    layout: columnsBuilder == null ? layout : const SectionedLayout.grid(),
   ),
 );
 
@@ -34,11 +40,11 @@ Widget _view(
 Finder _title(String label) =>
     find.descendant(of: find.byType(SliverList), matching: find.text(label));
 
-/// Title top minus list top (the chip bar bottom), minus the title's 12 px
-/// top padding. Navigation aligns the text itself to the viewport top.
+/// Title top minus list top and the header's 12px top padding.
 double _offsetError(WidgetTester tester, String label) =>
     tester.getTopLeft(_title(label)).dy -
-    tester.getTopLeft(find.byType(CustomScrollView)).dy;
+    tester.getTopLeft(find.byType(CustomScrollView)).dy -
+    12;
 
 SectionedChipScrollViewState<int> _state(WidgetTester tester) =>
     tester.state(find.byType(SectionedChipScrollView<int>));
@@ -58,6 +64,188 @@ double _scaleAt(WidgetTester tester, Finder f) =>
     MediaQuery.textScalerOf(tester.element(f)).scale(10) / 10;
 
 void main() {
+  group('round 2', () {
+    Future<void> build(
+      WidgetTester tester, {
+      double scale = 1,
+      double width = 375,
+      bool categories = false,
+      SectionedChipScrollStyle style =
+          const SectionedChipScrollStyle.outlined(),
+    }) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = Size(width, 812);
+      addTearDown(tester.view.reset);
+      final sections = testSections(List.filled(35, 8));
+      Widget item(BuildContext context, int i) =>
+          SizedBox(height: 72.0 + i * 13, child: Text('row $i'));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+            child: Scaffold(
+              body: categories
+                  ? CategorizedChipScrollView<int>(
+                      categories: [
+                        SectionCategory(
+                          id: 'c',
+                          label: 'Category',
+                          sections: sections,
+                        ),
+                      ],
+                      itemBuilder: item,
+                    )
+                  : SectionedChipScrollView<int>(
+                      sections: sections,
+                      itemBuilder: item,
+                      style: style,
+                    ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('R1 anchor follows parent text reflow at unchanged viewport', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(375, 812);
+      addTearDown(tester.view.reset);
+      final scale = ValueNotifier(1.0);
+      addTearDown(scale.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<double>(
+            valueListenable: scale,
+            builder: (_, value, _) => MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(value)),
+              child: Scaffold(
+                body: Column(
+                  children: [
+                    const Text(
+                      'A heading above the category bar',
+                      style: TextStyle(fontSize: 20),
+                    ),
+                    Expanded(child: _view(testSections(List.filled(8, 8)))),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await _openPanel(tester);
+      scale.value = 2;
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .getTopLeft(
+              find.byKey(const ValueKey('sectioned_chip_scroll.panelHeader')),
+            )
+            .dy,
+        tester.getTopLeft(find.byType(HeaderMaterial).first).dy,
+      );
+    });
+
+    for (final categories in [false, true]) {
+      testWidgets(
+        'L1 default renders one item per row categories=$categories',
+        (tester) async {
+          await build(tester, categories: categories);
+          final first = tester.getRect(find.text('row 0').first);
+          final second = tester.getRect(find.text('row 1').first);
+          expect(second.top, greaterThanOrEqualTo(first.bottom));
+          expect(second.left, first.left);
+        },
+      );
+    }
+
+    for (final width in [320.0, 375.0, 414.0, 430.0]) {
+      for (final scale in [1.0, 3.12]) {
+        testWidgets('V1 leading inset width=$width scale=$scale', (
+          tester,
+        ) async {
+          await build(tester, width: width, scale: scale);
+          final chip = find.byType(ChipControl).first;
+          expect(tester.getTopLeft(chip).dx, 12);
+        });
+      }
+    }
+
+    testWidgets('V1 style override sets the scrolling content inset', (
+      tester,
+    ) async {
+      final style = const SectionedChipScrollStyle.outlined().copyWith(
+        chipBarLeadingInset: 24,
+      );
+      await build(tester, style: style);
+      expect(tester.getTopLeft(find.byType(ChipControl).first).dx, 24);
+      expect(style.copyWith(), style);
+    });
+
+    testWidgets('L1 uneven list scroll-spy follows the visible section', (
+      tester,
+    ) async {
+      await build(tester);
+      await _openPanel(tester);
+      await tester.ensureVisible(find.text('Section 34').last);
+      await _pick(tester, 'Section 34');
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 700));
+      await tester.pumpAndSettle();
+      final position = listPosition(tester);
+      final id = _state(tester).geometry!.sectionAtOffset(position.pixels);
+      final selected = tester
+          .widgetList<ChipControl>(find.byType(ChipControl))
+          .singleWhere((c) => c.selected);
+      expect(selected.label, 'Section ${id!.substring(1)}');
+      expect(selected.label, isNot('Section 34'));
+    });
+
+    for (final timing in [true, false]) {
+      testWidgets(
+        '${timing ? 'V2' : 'V3'} far picker starts motion and selection immediately',
+        (tester) async {
+          await build(tester, scale: 3.12);
+          await _openPanel(tester);
+          final pick = find.text('Section 34').last;
+          await tester.ensureVisible(pick);
+          await tester.pumpAndSettle();
+          final before = listPosition(tester).pixels;
+          await tester.tap(pick);
+          await tester.pump();
+          List<String> selected() => tester
+              .widgetList<ChipControl>(
+                find.descendant(
+                  of: find.byType(HeaderMaterial).first,
+                  matching: find.byType(ChipControl),
+                ),
+              )
+              .where((c) => c.selected)
+              .map((c) => c.label)
+              .toList();
+          if (!timing) expect(selected(), ['Section 34']);
+          for (var i = 0; i < 6; i++) {
+            await tester.pump(const Duration(milliseconds: 16));
+            if (!timing) expect(selected(), ['Section 34']);
+          }
+          if (timing) expect(listPosition(tester).pixels, greaterThan(before));
+          for (
+            var i = 0;
+            i < 300 && _state(tester).navigationPhase != null;
+            i++
+          ) {
+            await tester.pump(const Duration(milliseconds: 16));
+            if (!timing) expect(selected(), ['Section 34']);
+          }
+          await tester.pumpAndSettle();
+          expect(_offsetError(tester, 'Section 34'), closeTo(0, 1));
+          expect(selected(), ['Section 34']);
+        },
+      );
+    }
+  });
   group('final design', () {
     Future<void> screen(
       WidgetTester tester,
@@ -189,8 +377,9 @@ void main() {
                       .ancestor(of: trigger, matching: find.byType(IconButton))
                       .first,
                 );
+                expect(slot.width, (16 * scale.clamp(0.0, 2.0) + 24).clamp(48.0, double.infinity));
+                expect(slot.height, greaterThanOrEqualTo(48));
                 if (!categories) {
-                  expect(slot.size, const Size(48, 48));
                   final long = find.text(names[2]).first;
                   final text = tester.widget<Text>(long);
                   expect(text.maxLines, 1);
@@ -199,7 +388,11 @@ void main() {
                   final chip = find
                       .ancestor(of: long, matching: find.byType(Material))
                       .first;
-                  expect(tester.getSize(chip).width, closeTo(width - 48, .01));
+                  expect(
+                    tester.getSize(chip).width,
+                    closeTo(width - slot.width - 12, .01),
+                  );
+                  expect(slot.height, closeTo(tester.getSize(chip).height, .5));
                   expect(tester.getSize(long).height, lessThan(60));
                 }
                 await tester.tap(trigger);
@@ -211,8 +404,10 @@ void main() {
                       matching: find.byType(IconButton),
                     )
                     .first;
-                expect(tester.getRect(close).size, const Size(48, 48));
-                expect(tester.getRect(close), slot);
+                expect(tester.getRect(close).size, slot.size);
+                expect(tester.getRect(close).right, closeTo(slot.right, .5));
+                expect(tester.getCenter(close).dy,
+                  closeTo(tester.getCenter(header).dy, .5));
                 final title = find.descendant(
                   of: header,
                   matching: find.byType(Text),
@@ -306,6 +501,253 @@ void main() {
       }
     }
 
+    for (final size in [
+      const Size(568, 320),
+      const Size(844, 390),
+      const Size(932, 430),
+    ]) {
+      for (final scale in [1.0, 3.12]) {
+        for (final categories in [false, true]) {
+          testWidgets(
+            'F1 landscape $size scale=$scale categories=$categories',
+            (tester) async {
+              await screen(
+                tester,
+                names,
+                size: size,
+                scale: scale,
+                categories: categories,
+              );
+              await tester.tap(
+                find.byIcon(categories ? Icons.unfold_more : Icons.expand_more),
+              );
+              await tester.pumpAndSettle();
+              expect(tester.takeException(), isNull);
+              expect(
+                tester.getBottomLeft(panel).dy,
+                lessThanOrEqualTo(size.height - 56),
+              );
+              tester.view.physicalSize = Size(size.height, size.width);
+              await tester.pumpAndSettle();
+              expect(tester.takeException(), isNull);
+              tester.view.physicalSize = size;
+              await tester.pumpAndSettle();
+              expect(tester.takeException(), isNull);
+              final chip = find.descendant(of: panel, matching: find.text('A'));
+              await tester.ensureVisible(chip);
+              await tester.pumpAndSettle();
+              final rect = tester.getRect(chip);
+              expect(
+                rect.center.dy,
+                inInclusiveRange(
+                  tester.getTopLeft(panel).dy,
+                  tester.getBottomLeft(panel).dy,
+                ),
+              );
+              await tester.tap(chip);
+              await tester.pumpAndSettle();
+              expect(panel, findsNothing);
+              expect(tester.takeException(), isNull);
+            },
+          );
+        }
+      }
+    }
+
+    testWidgets('R2 short panel scroll carries the header', (tester) async {
+      await screen(tester, names, size: const Size(568, 320), scale: 3.12);
+      await _openPanel(tester);
+      final header = find.byKey(
+        const ValueKey('sectioned_chip_scroll.panelHeader'),
+      );
+      final inner = find.byKey(
+        const ValueKey('sectioned_chip_scroll.panelScroll'),
+      );
+      final before = tester.getTopLeft(header).dy;
+      await tester.drag(inner, const Offset(0, -60));
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(header).dy, lessThan(before));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('R3 fades respect header padding and full panel extent', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        testApp(
+          SectionedChipScrollView<int>(
+            sections: testSections(List.filled(35, 8)),
+            itemBuilder: testItem,
+            style: const SectionedChipScrollStyle.outlined(edgeFadeExtent: 24),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final titlePadding = tester
+          .widget<Padding>(
+            find
+                .ancestor(
+                  of: _title('Section 0'),
+                  matching: find.byType(Padding),
+                )
+                .first,
+          )
+          .padding
+          .resolve(TextDirection.ltr)
+          .top;
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, -100));
+      await tester.pumpAndSettle();
+      final fade = find
+          .ancestor(
+            of: find.byType(HeaderMaterial).last,
+            matching: find.byType(Positioned),
+          )
+          .first;
+      expect(tester.getSize(fade).height, titlePadding);
+      await _openPanel(tester);
+      expect(
+        tester
+            .getSize(
+              find.byKey(const ValueKey('sectioned_chip_scroll.panelFade')),
+            )
+            .height,
+        24,
+      );
+    });
+
+    testWidgets('F2 expand visibility is stable across selected label widths', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        testApp(
+          SizedBox(
+            width: 300,
+            child: SectionedChipScrollView<int>(
+              sections: const [
+                ChipSection(id: 'a', label: 'A', items: [0, 1, 2, 3, 4, 5]),
+                ChipSection(
+                  id: 'b',
+                  label: 'Wide label',
+                  items: [0, 1, 2, 3, 4, 5],
+                ),
+              ],
+              itemBuilder: testItem,
+              chipTextStyle: const TextStyle(fontSize: 14),
+              selectedChipTextStyle: const TextStyle(fontSize: 40),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final visibility = <bool>[];
+      for (final label in ['A', 'Wide label', 'A']) {
+        final chip = find.text(label).first;
+        await tester.ensureVisible(chip);
+        await tester.tap(chip);
+        await tester.pumpAndSettle();
+        visibility.add(find.byIcon(Icons.expand_more).evaluate().isNotEmpty);
+      }
+      expect(visibility, [true, true, true]);
+    });
+
+    for (final categories in [false, true]) {
+      testWidgets(
+        'F3 anchor uses resized bounds in the first frame categories=$categories',
+        (tester) async {
+          await screen(
+            tester,
+            names,
+            scale: 3.12,
+            size: const Size(320, 568),
+            categories: categories,
+          );
+          await tester.tap(
+            find.byIcon(categories ? Icons.unfold_more : Icons.expand_more),
+          );
+          await tester.pumpAndSettle();
+          for (final size in [
+            const Size(568, 320),
+            const Size(844, 390),
+            const Size(932, 430),
+          ]) {
+            tester.view.physicalSize = size;
+            await tester.pump();
+            expect(tester.getSize(panel).width, size.width);
+            expect(tester.getTopLeft(panel).dy, 100);
+            expect(tester.takeException(), isNull);
+          }
+        },
+      );
+    }
+
+    testWidgets(
+      'F4 landed title keeps header padding and stays below the fade',
+      (tester) async {
+        await screen(tester, names, scale: 3.12);
+        await _openPanel(tester);
+        await tester.ensureVisible(find.text('Choice 10').last);
+        await _pick(tester, 'Choice 10');
+        final viewport = tester.getRect(find.byType(CustomScrollView));
+        final title = tester.getRect(_title('Choice 10'));
+        expect(title.top - viewport.top, closeTo(12, .1));
+        final fade = find.byType(HeaderMaterial).last;
+        expect(tester.getRect(fade).bottom, lessThanOrEqualTo(title.top));
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    for (final categories in [false, true]) {
+      for (final scale in [1.0, 3.12]) {
+        testWidgets(
+          'F5 bottom fade disappears when content fits or reaches end scale=$scale categories=$categories',
+          (tester) async {
+            BoxDecoration fade() =>
+                tester
+                        .widget<DecoratedBox>(
+                          find.byKey(
+                            const ValueKey('sectioned_chip_scroll.panelFade'),
+                          ),
+                        )
+                        .decoration
+                    as BoxDecoration;
+            await screen(
+              tester,
+              names.take(3).toList(),
+              scale: scale,
+              categories: categories,
+            );
+            await tester.tap(
+              find.byIcon(categories ? Icons.unfold_more : Icons.expand_more),
+            );
+            await tester.pumpAndSettle();
+            final fitPosition = tester
+                .widget<SingleChildScrollView>(inner)
+                .controller!
+                .position;
+            expect(fitPosition.maxScrollExtent, 0);
+            expect(fade().gradient, isNull);
+            await tester.tap(find.byIcon(Icons.expand_less));
+            await tester.pumpAndSettle();
+            await screen(tester, names, scale: scale, categories: categories);
+            await tester.tap(
+              find.byIcon(categories ? Icons.unfold_more : Icons.expand_more),
+            );
+            await tester.pumpAndSettle();
+            final position = tester
+                .widget<SingleChildScrollView>(inner)
+                .controller!
+                .position;
+            expect(position.extentAfter, greaterThan(0));
+            expect(fade().gradient, isNotNull);
+            position.jumpTo(position.maxScrollExtent);
+            await tester.pumpAndSettle();
+            expect(position.extentAfter, 0);
+            expect(fade().gradient, isNull);
+          },
+        );
+      }
+    }
+
     testWidgets('C7 open picker follows live width and height on resize', (
       tester,
     ) async {
@@ -331,7 +773,9 @@ void main() {
               matching: find.byType(IconButton),
             )
             .first;
-        expect(tester.getTopLeft(close), Offset(size.width - 48, 100));
+        expect(tester.getRect(close).right, closeTo(size.width, .5));
+        expect(tester.getCenter(close).dy,
+          closeTo(tester.getCenter(header).dy, .5));
         expect(tester.takeException(), isNull);
       }
     });
@@ -389,6 +833,137 @@ void main() {
       },
     );
 
+    for (final width in [320.0, 375.0, 414.0, 430.0]) {
+      testWidgets('Q1 bar fades stop at content edges width=$width', (
+        tester,
+      ) async {
+        await screen(tester, names, size: Size(width, 812));
+        final bar = find.byType(SingleChildScrollView).first;
+        Future<int> edgeAlpha(double x) async {
+          final mask = tester.widget<ShaderMask>(
+            find.ancestor(of: bar, matching: find.byType(ShaderMask)).first,
+          );
+          final size = tester.getSize(bar);
+          return (await tester.runAsync(() async {
+            final recorder = ui.PictureRecorder();
+            final rect = Offset.zero & size;
+            ui.Canvas(
+              recorder,
+            ).drawRect(rect, ui.Paint()..shader = mask.shaderCallback(rect));
+            final picture = recorder.endRecording();
+            final image = await picture.toImage(size.width.ceil(), 1);
+            final bytes = (await image.toByteData())!;
+            final alpha = bytes.getUint8(x.floor() * 4 + 3);
+            image.dispose();
+            picture.dispose();
+            return alpha;
+          }))!;
+        }
+
+        Future<void> choose(String label) async {
+          await _openPanel(tester);
+          await tester.ensureVisible(find.text(label).last);
+          await _pick(tester, label);
+          final chip = find
+              .ancestor(
+                of: find.text(label).first,
+                matching: find.byType(Material),
+              )
+              .first;
+          final rect = tester.getRect(chip);
+          final visible = tester.getRect(bar);
+          expect(rect.left, greaterThanOrEqualTo(visible.left - .1));
+          expect(rect.right, lessThanOrEqualTo(visible.right + .1));
+          expect(
+            rect.right,
+            lessThanOrEqualTo(
+              tester.getRect(find.byIcon(Icons.expand_more)).left,
+            ),
+          );
+        }
+
+        await choose('Choice 34');
+        expect(await edgeAlpha(tester.getSize(bar).width - 1), 255);
+        // Leading fade present when scrolled past the start.
+        expect(await edgeAlpha(0), lessThan(255));
+        await choose('A');
+        final position = tester
+            .widget<SingleChildScrollView>(bar)
+            .controller!
+            .position;
+        expect(position.pixels, 0);
+        // Leading fade absent at offset 0.
+        expect(await edgeAlpha(0), 255);
+        position.jumpTo(position.maxScrollExtent.clamp(1.0, 40.0));
+        await tester.pump();
+        expect(position.pixels, greaterThan(0));
+        expect(await edgeAlpha(0), lessThan(255));
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    for (final width in [320.0, 375.0, 430.0, 768.0]) {
+      for (final label in [
+        names[2],
+        'Choice 10',
+      ]) {
+        testWidgets(
+          'G1 selected label stays opaque under bar fade width=$width label=$label',
+          (tester) async {
+            await screen(tester, names, size: Size(width, 812));
+            final bar = find.byType(SingleChildScrollView).first;
+            Future<int> alphaAt(double x) async {
+              final mask = tester.widget<ShaderMask>(
+                find.ancestor(of: bar, matching: find.byType(ShaderMask)).first,
+              );
+              final size = tester.getSize(bar);
+              return (await tester.runAsync(() async {
+                final recorder = ui.PictureRecorder();
+                final rect = Offset.zero & size;
+                ui.Canvas(recorder).drawRect(
+                  rect,
+                  ui.Paint()..shader = mask.shaderCallback(rect),
+                );
+                final picture = recorder.endRecording();
+                final image = await picture.toImage(size.width.ceil(), 1);
+                final bytes = (await image.toByteData())!;
+                final alpha = bytes.getUint8(x.floor().clamp(0, size.width.ceil() - 1) * 4 + 3);
+                image.dispose();
+                picture.dispose();
+                return alpha;
+              }))!;
+            }
+
+            await _openPanel(tester);
+            await tester.ensureVisible(find.text(label).last);
+            await _pick(tester, label);
+            final text = find.text(label).first;
+            final barRect = tester.getRect(bar);
+            final labelRect = tester.getRect(text);
+            expect(await alphaAt(labelRect.left - barRect.left), 255);
+            expect(await alphaAt(labelRect.right - barRect.left - 1), 255);
+            final position = tester
+                .widget<SingleChildScrollView>(bar)
+                .controller!
+                .position;
+            // Fade width equals the leading inset on each active side.
+            if (position.pixels > 0) {
+              const inset = 12.0;
+              expect(await alphaAt(0), lessThan(255));
+              expect(await alphaAt(inset + 1), 255);
+            }
+            if (position.extentAfter > 0) {
+              const inset = 12.0;
+              final end = tester.getSize(bar).width;
+              expect(await alphaAt(end - 1), lessThan(255));
+              expect(await alphaAt(end - inset - 1), 255);
+            }
+            expect(tester.takeException(), isNull);
+          },
+        );
+      }
+    }
+
     for (final direction in TextDirection.values) {
       testWidgets(
         'C1 bar follows 48px from leading edge and clamps at both ends $direction',
@@ -428,7 +1003,7 @@ void main() {
           await choose('Choice 10');
           expect(leading('Choice 10'), closeTo(48, .1));
           await choose('A');
-          expect(leading('A'), closeTo(0, .1));
+          expect(leading('A'), closeTo(12, .1));
           await choose('Choice 34');
           expect(leading('Choice 34'), greaterThanOrEqualTo(48));
         },
@@ -571,16 +1146,9 @@ void main() {
             offsets.add(position.pixels);
           }
           if (_state(tester).navigationPhase == 'moving') {
-            expect(panel, findsNothing);
-            expect(selected, isEmpty);
-            expect(
-              tester.getSemantics(
-                find.bySemanticsLabel('${names.first}, 1 of 35'),
-              ),
-              containsSemantics(isSelected: true),
-            );
+            expect(selected, ['s10']);
           }
-          if (selected.isNotEmpty) break;
+          if (_state(tester).navigationPhase == null) break;
         }
         await tester.pumpAndSettle();
         expect(offsets.length, greaterThan(5));
@@ -594,9 +1162,11 @@ void main() {
             .first;
         final bar = tester.getRect(find.byType(HeaderMaterial).first);
         final rect = tester.getRect(chip);
-        final margin = (bar.width - 48 - rect.width).clamp(0.0, 48.0);
+        final buttonWidth = tester.getSize(find.ancestor(
+          of: find.byIcon(Icons.expand_more), matching: find.byType(IconButton)).first).width;
+        final margin = (bar.width - buttonWidth - rect.width).clamp(0.0, 48.0);
         expect(rect.left, closeTo(bar.left + margin, .1));
-        expect(rect.right, lessThanOrEqualTo(bar.right - 48));
+        expect(rect.right, lessThanOrEqualTo(bar.right - buttonWidth));
         await tester.drag(
           find.byType(CustomScrollView),
           const Offset(0, -4000),
@@ -612,7 +1182,7 @@ void main() {
             .first;
         final spyRect = tester.getRect(spyChip);
         expect(spyRect.left, greaterThanOrEqualTo(bar.left));
-        expect(spyRect.right, lessThanOrEqualTo(bar.right - 48));
+        expect(spyRect.right, lessThanOrEqualTo(bar.right - buttonWidth));
         expect(tester.takeException(), isNull);
       },
     );
@@ -778,7 +1348,13 @@ void main() {
     ) async {
       final selected = <String>[];
       Future<void> show(List<ChipSection<int>> s) => tester.pumpWidget(
-        testApp(_view(s, onSectionSelected: (x) => selected.add(x.id))),
+        testApp(
+          _view(
+            s,
+            layout: const SectionedLayout.grid(),
+            onSectionSelected: (x) => selected.add(x.id),
+          ),
+        ),
       );
       final all = testSections([2, 2, 2]);
       await show(all);
@@ -830,6 +1406,46 @@ void main() {
       expect(find.text('Sections'), findsNothing);
       expect(find.text('Renamed'), findsWidgets);
     });
+
+    for (final scale in [1.0, 3.12]) {
+      testWidgets('R5-1 picked long chip keeps inset and ellipsis scale=$scale', (
+        tester,
+      ) async {
+        const label = 'A very long section name that must remain ellipsized '
+            'after the longest chip is selected';
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(375, 812);
+        addTearDown(tester.view.reset);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+              child: Scaffold(
+                body: _view([
+                  ...testSections([8, 8, 8]),
+                  const ChipSection(id: 'long', label: label, items: [0, 1, 2]),
+                ]),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await _openPanel(tester);
+        await tester.ensureVisible(find.text(label).last);
+        await _pick(tester, label);
+        final chip = find.byWidgetPredicate(
+          (w) => w is ChipControl && w.selected && w.label == label,
+        );
+        final inset = const SectionedChipScrollStyle.outlined()
+            .chipBarLeadingInset;
+        expect(tester.getRect(chip).left, greaterThanOrEqualTo(inset - .5));
+        final text = find.descendant(of: chip, matching: find.text(label));
+        expect(tester.widget<Text>(text).overflow, TextOverflow.ellipsis);
+        final paragraph = tester.renderObject<RenderParagraph>(text);
+        expect(paragraph.didExceedMaxLines, isTrue);
+        expect(paragraph.overflow, TextOverflow.ellipsis);
+      });
+    }
 
     testWidgets('a long chip label stays on one line with ellipsis', (
       tester,
@@ -946,6 +1562,8 @@ void main() {
       }
       expect(listPosition(tester).pixels, greaterThan(0));
       // One tap: the chip bar is outside the animating scroll view.
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.ensureVisible(find.text('Section 4').first);
       await tester.tap(find.text('Section 4').first);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
@@ -1025,42 +1643,431 @@ void main() {
       );
     });
 
-    testWidgets('changing row geometry cancels motion and resumes scroll-spy', (
+    testWidgets(
+      'settling row geometry retargets the jump and still lands',
+      (tester) async {
+        // Section 5 above the target grows once after first layout (A1 settle).
+        const grower = -1;
+        Widget item(BuildContext c, int i) =>
+            i == grower ? const _SettlingTile(index: grower) : testItem(c, i);
+        final s = [
+          ...testSections(List.filled(5, 12)),
+          const ChipSection(id: 's5', label: 'Section 5', items: [grower]),
+          ...testSections(List.filled(7, 12)).skip(6),
+        ];
+        await tester.pumpWidget(testApp(_view(s, itemBuilder: item)));
+        await _openPanel(tester);
+        await tester.tap(find.text('Section 6').last);
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+        expect(_state(tester).navigationPhase, isNull);
+        expect(_offsetError(tester, 'Section 6').abs(), lessThan(1));
+        await tester.fling(
+          find.byType(CustomScrollView),
+          const Offset(0, 50000),
+          8000,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          tester.getSemantics(find.bySemanticsLabel('Section 0, 1 of 7')),
+          containsSemantics(isSelected: true),
+        );
+      },
+    );
+  });
+
+  group('A1 A2 slow far jump', () {
+    /// Grows once after the first layout, like Android release content settle.
+    Widget settlingItem(BuildContext context, int i) => _SettlingTile(index: i);
+
+    testWidgets('A3 opening many records built and measured rows', (
       tester,
     ) async {
-      // Section 5 sits right above the target and keeps growing once it is
-      // laid out, so the target title keeps moving down.
-      const grower = -1;
-      Widget item(BuildContext c, int i) => i == grower
-          ? TweenAnimationBuilder<double>(
-              tween: Tween(begin: 100, end: 40000),
-              duration: const Duration(seconds: 40),
-              builder: (_, h, _) => SizedBox(height: h),
-            )
-          : testItem(c, i);
-      final s = [
-        ...testSections(List.filled(5, 12)),
-        const ChipSection(id: 's5', label: 'Section 5', items: [grower]),
-        ...testSections(List.filled(7, 12)).skip(6),
-      ];
-      await tester.pumpWidget(testApp(_view(s, itemBuilder: item)));
-      await _openPanel(tester);
-      await tester.tap(find.text('Section 6').last);
-      await tester.pumpAndSettle(const Duration(milliseconds: 100));
-      expect(tester.takeException(), isNull);
-      expect(_state(tester).navigationPhase, isNull);
-      // Scroll-spy is back: dragging to the top selects section 0.
-      await tester.fling(
-        find.byType(CustomScrollView),
-        const Offset(0, 50000),
-        8000,
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(360, 640);
+      addTearDown(tester.view.reset);
+      final built = <int>{};
+      await tester.pumpWidget(
+        testApp(
+          SectionedChipScrollView<int>(
+            sections: [
+              for (var s = 0; s < 35; s++)
+                ChipSection(
+                  id: 's$s',
+                  label: 'Category $s',
+                  items: List.generate(8, (r) => s * 100 + r),
+                ),
+            ],
+            itemBuilder: (c, i) {
+              built.add(i);
+              return testItem(c, i);
+            },
+          ),
+        ),
       );
-      await tester.pumpAndSettle(const Duration(milliseconds: 100));
-      expect(
-        tester.getSemantics(find.bySemanticsLabel('Section 0, 1 of 7')),
-        containsSemantics(isSelected: true),
+      final firstFrame = built.length;
+      await tester.pumpAndSettle();
+      final geometry = _state(tester).geometry!;
+      final measured = geometry.sections.fold<int>(
+        0,
+        (sum, s) => sum + s.rowExtents.whereType<double>().length,
+      );
+      final touched = built.map((i) => i ~/ 100).toSet().length;
+      expect(touched, 1);
+      expect(measured, lessThan(35 * 8));
+      debugPrint(
+        'A3 opening: first-frame rows=$firstFrame; settled built=${built.length}; measured=$measured; sections=$touched/35; total rows=280',
       );
     });
+
+    testWidgets(
+      'A1 far pick lands under slow frames and settling row heights',
+      (tester) async {
+        final built = <int>{};
+        Widget countedItem(BuildContext context, int i) {
+          built.add(i);
+          return settlingItem(context, i);
+        }
+
+        final selected = <String>[];
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(360, 640);
+        addTearDown(tester.view.reset);
+        final sections = [
+          for (var s = 0; s < 35; s++)
+            ChipSection(
+              id: 's$s',
+              label: 'Category $s',
+              items: List.generate(40, (r) => s * 100 + r),
+            ),
+        ];
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: SectionedChipScrollView<int>(
+                sections: sections,
+                itemBuilder: countedItem,
+                sectionDecoration: const BoxDecoration(
+                  border: Border.fromBorderSide(BorderSide(width: 8)),
+                ),
+                onSectionSelected: (s) => selected.add(s.id),
+                labels: const SectionedChipScrollLabels(panelTitle: 'Sections'),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(_state(tester).geometry!.sections[30].top, isNull);
+        await _openPanel(tester);
+        final pick = find.text('Category 30').last;
+        await tester.ensureVisible(pick);
+        await tester.pumpAndSettle();
+        final before = listPosition(tester).pixels;
+        built.clear();
+        final offsets = <double>{before};
+        final position = listPosition(tester);
+        void recordOffset() => offsets.add(position.pixels);
+        position.addListener(recordOffset);
+        await tester.tap(pick);
+        // Pick frame: selection commits and motion must start.
+        await tester.pump();
+        expect(selected, ['s30']);
+        expect(_state(tester).navigationPhase, isNotNull);
+        await tester.pump(const Duration(milliseconds: 100));
+        debugPrint(
+          'A1 first100ms: before=$before; offset=${listPosition(tester).pixels}',
+        );
+        expect(
+          listPosition(tester).pixels,
+          greaterThan(before),
+          reason: 'far pick must move in the first slow frame',
+        );
+        // T-d counts only animation samples after the initial pre-jump.
+        offsets.clear();
+        expect(
+          built.where((i) => i ~/ 100 >= 1 && i ~/ 100 <= 27 && i % 100 != 39),
+          isEmpty,
+          reason: 'do not build the intervening section rows',
+        );
+        // Slow device: large frame gaps while rows settle and remeasure.
+        for (var i = 0; i < 120; i++) {
+          await tester.pump(const Duration(milliseconds: 100));
+          if (_state(tester).navigationPhase == null) break;
+        }
+        await tester.pumpAndSettle();
+        expect(listPosition(tester).pixels, greaterThan(before));
+        expect(
+          built.where((i) => i ~/ 100 >= 1 && i ~/ 100 <= 27 && i % 100 != 39),
+          isEmpty,
+          reason: 'far pick must not measure the intervening prefix',
+        );
+        expect(_offsetError(tester, 'Category 30'), closeTo(0, 1));
+        expect(selected.last, 's30');
+        expect(_state(tester).navigationPhase, isNull);
+        expect(offsets.length, greaterThan(2),
+          reason: 'T-d: A1 must animate after its pre-jump');
+        position.removeListener(recordOffset);
+      },
+    );
+
+    testWidgets('A2 far pick starts moving within 100ms and animates at AX5', (
+      tester,
+    ) async {
+      final selected = <String>[];
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(360, 640);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(3.12)),
+            child: Scaffold(
+              body: SectionedChipScrollView<int>(
+                sections: testSections(List.filled(35, 8), 'Category'),
+                itemBuilder: settlingItem,
+                layout: const SectionedLayout.list(),
+                onSectionSelected: (s) => selected.add(s.id),
+                labels: const SectionedChipScrollLabels(panelTitle: 'Sections'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openPanel(tester);
+      final pick = find.text('Category 30').last;
+      await tester.ensureVisible(pick);
+      await tester.pumpAndSettle();
+      final before = listPosition(tester).pixels;
+      await tester.tap(pick);
+      await tester.pump();
+      expect(selected, ['s30']);
+      final offsets = <double>[before];
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        final pixels = listPosition(tester).pixels;
+        if (offsets.last != pixels) offsets.add(pixels);
+      }
+      expect(
+        offsets.any((o) => o > before),
+        isTrue,
+        reason: 'list must start moving within ~100ms of the pick',
+      );
+      expect(
+        offsets.length,
+        greaterThan(2),
+        reason: 'far jump must animate, not teleport',
+      );
+      for (var i = 0; i < 200 && _state(tester).navigationPhase != null; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      await tester.pumpAndSettle();
+      expect(_offsetError(tester, 'Category 30'), closeTo(0, 1));
+      expect(selected.last, 's30');
+    });
+  });
+
+  group('T1 panel tap after fling', () {
+    final many = [
+      for (var i = 0; i < 35; i++)
+        ChipSection(
+          id: 's$i',
+          label: 'Category $i',
+          items: List.generate(8, (j) => j),
+        ),
+    ];
+    final panelScroll = find.byKey(
+      const ValueKey('sectioned_chip_scroll.panelScroll'),
+    );
+
+    Future<void> pumpAx5(
+      WidgetTester tester,
+      List<String> selected,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(375, 812);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: const MediaQueryData(textScaler: TextScaler.linear(3.12)),
+            child: Scaffold(
+              body: SectionedChipScrollView<int>(
+                sections: many,
+                itemBuilder: testItem,
+                layout: const SectionedLayout.list(),
+                config: const SectionedChipScrollConfig(panelBottomInset: 56),
+                labels: const SectionedChipScrollLabels(
+                  panelTitle: 'Sections',
+                ),
+                onSectionSelected: (s) => selected.add(s.id),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _openPanel(tester);
+    }
+
+    testWidgets('T1a tap after panel fling settles picks at AX5', (
+      tester,
+    ) async {
+      final selected = <String>[];
+      await pumpAx5(tester, selected);
+      await tester.fling(panelScroll, const Offset(0, -3000), 4000);
+      await tester.pumpAndSettle();
+      const label = 'Category 25';
+      final chip = find.text(label).last;
+      await tester.ensureVisible(chip);
+      await tester.pumpAndSettle();
+      await tester.tap(chip);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('sectioned_chip_scroll.panel')),
+        findsNothing,
+      );
+      expect(selected, ['s25']);
+    });
+
+    testWidgets('T1b tap during panel ballistic picks at AX5', (tester) async {
+      final selected = <String>[];
+      await pumpAx5(tester, selected);
+      await tester.ensureVisible(find.text('Category 20').last);
+      await tester.pumpAndSettle();
+      final position = tester
+          .widget<SingleChildScrollView>(panelScroll)
+          .controller!
+          .position;
+      await tester.fling(panelScroll, const Offset(0, -2000), 3000);
+      // Wait until motion is below the platform touch slop, but not settled.
+      final slop = kTouchSlop;
+      var frames = 0;
+      while (frames < 120) {
+        await tester.pump(const Duration(milliseconds: 16));
+        frames++;
+        final activity = position.activity;
+        if (activity is BallisticScrollActivity) {
+          final velocity = activity.velocity.abs();
+          if (velocity > 0 && velocity <= slop * 60) break;
+        } else if (position.isScrollingNotifier.value == false) {
+          break;
+        }
+      }
+      // Tap a chip whose center clears the fixed panel header.
+      final panel = find.byKey(const ValueKey('sectioned_chip_scroll.panel'));
+      final headerBottom = tester
+          .getRect(
+            find.byKey(const ValueKey('sectioned_chip_scroll.panelHeader')),
+          )
+          .bottom;
+      final panelRect = tester.getRect(panel);
+      String? tapped;
+      for (var i = 0; i < 35; i++) {
+        final label = 'Category $i';
+        final text = find.text(label);
+        if (text.evaluate().isEmpty) continue;
+        final rect = tester.getRect(text.last);
+        if (rect.center.dy > headerBottom + 4 &&
+            panelRect.contains(rect.center)) {
+          await tester.tap(text.last);
+          tapped = 's$i';
+          break;
+        }
+      }
+      expect(tapped, isNotNull, reason: 'need a visible chip to tap');
+      await tester.pumpAndSettle();
+      expect(panel, findsNothing);
+      expect(selected, [tapped]);
+    });
+  });
+
+  group('G3 landing matrix', () {
+    final uneven = testSections([1, 1, 1, ...List.filled(11, 12)]);
+    final even = testSections(List.filled(14, 6));
+
+    Future<void> pumpSized(
+      WidgetTester tester, {
+      required Size size,
+      required double scale,
+      required List<ChipSection<int>> sections,
+      SectionedLayout layout = const SectionedLayout.list(),
+      ValueChanged<ChipSection<int>>? onSelected,
+    }) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MediaQuery(
+            data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+            child: Scaffold(
+              body: _view(
+                sections,
+                layout: layout,
+                onSectionSelected: onSelected,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    for (final scale in [1.0, 3.12]) {
+      testWidgets('G3 grid exact landing uneven scale=$scale', (tester) async {
+        await pumpSized(
+          tester,
+          size: const Size(375, 812),
+          scale: scale,
+          sections: uneven,
+          layout: const SectionedLayout.grid(),
+        );
+        await _openPanel(tester);
+        await tester.ensureVisible(find.text('Section 10').last);
+        await _pick(tester, 'Section 10');
+        expect(_offsetError(tester, 'Section 10'), closeTo(0, .1));
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    for (final width in [320.0, 430.0]) {
+      for (final height in [568.0, 932.0]) {
+        for (final scale in [1.0, 3.12]) {
+          for (final target in [1, 7, 12]) {
+            testWidgets(
+              'G3 list landing+spy w=$width h=$height scale=$scale t=$target',
+              (tester) async {
+                final selected = <String>[];
+                await pumpSized(
+                  tester,
+                  size: Size(width, height),
+                  scale: scale,
+                  sections: even,
+                  onSelected: (s) => selected.add(s.id),
+                );
+                await _openPanel(tester);
+                await tester.ensureVisible(find.text('Section $target').last);
+                await _pick(tester, 'Section $target');
+                expect(selected.last, 's$target');
+                expect(
+                  _offsetError(tester, 'Section $target'),
+                  closeTo(0, .1),
+                );
+                await tester.fling(
+                  find.byType(CustomScrollView),
+                  Offset(0, target <= 1 ? -5000 : 5000),
+                  5000,
+                );
+                await tester.pumpAndSettle();
+                expect(selected.last, isNot('s$target'));
+                expect(tester.takeException(), isNull);
+              },
+            );
+          }
+        }
+      }
+    }
   });
 
   group('stage 2', () {
@@ -1162,6 +2169,9 @@ void main() {
               final header = tester.getRect(_title('Section 10'));
               final viewport = tester.getRect(find.byType(CustomScrollView));
               expect(header.overlaps(viewport), isTrue);
+              if (uneven) {
+                expect(_offsetError(tester, 'Section 10'), closeTo(0, .1));
+              }
               expect(
                 offsets.length,
                 greaterThan(3),
@@ -1225,11 +2235,9 @@ void main() {
             await tester.tap(find.text('Section $target').first);
             await phase(tester, preparing ? 'preparing' : 'moving');
             if (!preparing) await tester.pump(const Duration(milliseconds: 64));
-            expect(
-              selected,
-              isEmpty,
-              reason: 'callbacks muted during transaction',
-            );
+            expect(selected, [
+              's$target',
+            ], reason: 'pick selects immediately; spy stays muted');
             final before = listPosition(tester).pixels;
             expect(tester.takeAnnouncements(), isEmpty);
             switch (cause) {
@@ -1277,11 +2285,20 @@ void main() {
                 await tester.pumpWidget(const SizedBox());
             }
             await tester.pumpAndSettle();
-            expect(
-              tester.takeAnnouncements().map((a) => a.message),
-              isNot(contains('Section $target')),
-            );
-            expect(selected, isNot(contains('s$target')));
+            // Row-height settle must not cancel (A1); other causes still cancel.
+            if (cause == 'row') {
+              expect(
+                tester.takeAnnouncements().map((a) => a.message),
+                contains('Section $target'),
+              );
+              expect(_offsetError(tester, 'Section $target').abs(), lessThan(1));
+            } else {
+              expect(
+                tester.takeAnnouncements().map((a) => a.message),
+                isNot(contains('Section $target')),
+              );
+            }
+            expect(selected.first, 's$target');
             if (cause != 'dispose' && !(cause == 'category' && !rail)) {
               expect(_state(tester).navigationPhase, isNull);
               final stopped = listPosition(tester).pixels;
@@ -1295,7 +2312,6 @@ void main() {
                 'rotation',
                 'scale',
                 'insets',
-                'row',
                 'data',
               ].contains(cause)) {
                 expect(
@@ -1347,12 +2363,9 @@ void main() {
           await tester.pump();
           await tester.pump(const Duration(milliseconds: 80));
           expect(route.animation!.value, inExclusiveRange(0, 1));
-          expect(
-            listPosition(tester).pixels,
-            0,
-            reason: 'no move during close',
-          );
-          expect(selected, isEmpty);
+          final picked = !['barrier', 'back'].contains(dismiss);
+          expect(listPosition(tester).pixels, picked ? greaterThan(0) : 0);
+          expect(selected, picked ? ['s10'] : isEmpty);
           if (dismiss == 'stale-data') {
             data = [
               ...data.take(13),
@@ -1364,12 +2377,16 @@ void main() {
             await tester.pumpWidget(build());
           }
           await tester.pumpAndSettle();
-          expect(selected, dismiss == 'pick' ? ['s10'] : isEmpty);
+          if (picked) {
+            expect(selected.first, 's10');
+          } else {
+            expect(selected, isEmpty);
+          }
           expect(
             tester.takeAnnouncements().map((a) => a.message),
             dismiss == 'pick' ? ['Section 10'] : isEmpty,
           );
-          if (dismiss != 'pick') expect(listPosition(tester).pixels, 0);
+          if (!picked) expect(listPosition(tester).pixels, 0);
         });
       }
 
@@ -1499,6 +2516,7 @@ void main() {
             sections: testSections(List.filled(14, 3)),
             itemBuilder: (context, item) =>
                 SizedBox(height: 120, child: Text('item $item ($seed)')),
+            layout: const SectionedLayout.grid(),
             onSectionSelected: (s) => selected.add(s.id),
           ),
         );
@@ -1574,6 +2592,7 @@ void main() {
         SectionedChipScrollView<int>(
           sections: testSections(List.filled(14, 3)),
           columnsBuilder: (w, t) => 3 + (seed * 0),
+          layout: const SectionedLayout.grid(),
           itemBuilder: testItem,
           onSectionSelected: (s) => selected.add(s.id),
         ),
@@ -1934,4 +2953,29 @@ class _LiveTileState extends State<_LiveTile> {
 
   @override
   Widget build(BuildContext context) => const SizedBox(height: 120);
+}
+
+/// First layout is short; the next frame grows — mimics Android content settle.
+class _SettlingTile extends StatefulWidget {
+  const _SettlingTile({required this.index});
+  final int index;
+
+  @override
+  State<_SettlingTile> createState() => _SettlingTileState();
+}
+
+class _SettlingTileState extends State<_SettlingTile> {
+  double _height = 72;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _height < 120) setState(() => _height = 120);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      SizedBox(height: _height, child: Text('item ${widget.index}'));
 }

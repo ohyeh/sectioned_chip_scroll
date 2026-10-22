@@ -211,6 +211,7 @@ void main() {
       testApp(
         SectionedChipScrollView<int>(
           sections: testSections([3]),
+          layout: const SectionedLayout.grid(),
           itemBuilder: (context, item) => LayoutBuilder(
             builder: (context, constraints) =>
                 SizedBox(height: 100, child: Text('item $item')),
@@ -232,6 +233,7 @@ void main() {
             onTap: () => tapped.add(item),
             child: SizedBox(height: 50, child: Text('item $item')),
           ),
+          layout: const SectionedLayout.grid(),
         ),
         direction: TextDirection.rtl,
       ),

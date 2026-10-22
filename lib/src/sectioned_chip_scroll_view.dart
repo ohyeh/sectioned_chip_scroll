@@ -29,7 +29,7 @@ class SectionedChipScrollView<T> extends StatefulWidget {
     super.key,
     required this.sections,
     required this.itemBuilder,
-    this.layout = const SectionedLayout.grid(),
+    this.layout = const SectionedLayout.list(),
     this.style = const SectionedChipScrollStyle.outlined(),
     this.sectionDecoration,
     this.config = const SectionedChipScrollConfig(),
@@ -118,7 +118,10 @@ class SectionedChipScrollView<T> extends StatefulWidget {
 /// public only for behavior tests and geometry inspection.
 class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
     with SingleTickerProviderStateMixin {
-  final _scroll = ScrollController();
+  final _scroll = _IndexedScrollController();
+  final _originId = ValueNotifier<String?>(null);
+  bool _restoredOrigin = false;
+  bool _restoring = false;
   // The chip bar position follows the selection; it must not take the list's
   // PageStorage slot.
   final _chipScroll = ScrollController(keepScrollOffset: false);
@@ -186,11 +189,43 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_restoredOrigin) return;
+    _restoredOrigin = true;
+    final saved = PageStorage.maybeOf(context)?.readState(context);
+    if (saved is (String, int, double) && _sections.isNotEmpty) {
+      _restoring = true;
+      final id = _sections.any((s) => s.id == saved.$1)
+          ? saved.$1
+          : _sections[saved.$2.clamp(0, _sections.length - 1)].id;
+      _originId.value = id;
+      _scroll.origin = saved.$3;
+    }
+  }
+
+  @override
   void didUpdateWidget(SectionedChipScrollView<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
     final previous = _sections;
     _sections = _visibleSections();
     final same = _sameSections(previous, _sections);
+    if (widget.layout is! SectionedGridLayout ||
+        !_sections.any((s) => s.id == _originId.value)) {
+      final hadOrigin = _originId.value != null;
+      _originId.value = null;
+      _scroll.origin = 0;
+      _scroll.leadingBound = null;
+      _scroll.trailingBound = null;
+      if (hadOrigin) {
+        _geometry = null;
+        _endPick = null;
+        PageStorage.maybeOf(context)?.writeState(context, null);
+        if (_scroll.hasClients) {
+          (_scroll.position as _IndexedScrollPosition).resetOrigin();
+        }
+      }
+    }
     final w = widget;
     final rangeChanged =
         !same ||
@@ -238,6 +273,7 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
     _jumpToken++;
     _motion.dispose();
     _cacheExtent.dispose();
+    _originId.dispose();
     _scroll.dispose();
     _chipScroll.dispose();
     super.dispose();
@@ -286,19 +322,25 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
   }
 
   void _revealChip(String id) {
-    if (_targetId != null) return;
     final ctx = _chipKeys[id]?.currentContext;
     final chip = ctx?.findRenderObject();
     if (ctx == null || chip == null || !chip.attached) return;
     final position = _chipScroll.position;
+    if (id == _sections.first.id) {
+      position.jumpTo(position.minScrollExtent);
+      return;
+    }
     final box = chip as RenderBox;
     final start = RenderAbstractViewport.of(
       chip,
     ).getOffsetToReveal(chip, 0).offset;
-    final margin = (position.viewportDimension - box.size.width).clamp(
-      0.0,
-      48.0,
-    );
+    // Keep the chip clear of both edge fades (fade width = leading inset)
+    // when the scroll range allows; otherwise keep it fully visible.
+    final fade = widget.style.chipBarLeadingInset;
+    final room = position.viewportDimension - box.size.width;
+    final margin = room >= fade * 2
+        ? (room - fade).clamp(fade, 48.0)
+        : room.clamp(0.0, fade);
     position.jumpTo(
       (start - margin).clamp(
         position.minScrollExtent,
@@ -310,6 +352,7 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
   /// Stops the running jump and gives scroll-spy back, for a jump that no
   /// new jump replaces (a drag or a data update).
   void _cancelJump() {
+    _restoring = false;
     _jumpToken++;
     _targetId = null;
     _moving = false;
@@ -321,15 +364,24 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
   }
 
   Future<void> _jumpTo(String id) async {
+    if (widget.layout is SectionedGridLayout &&
+        (_originId.value != null ||
+            _geometry?.sections.where((s) => s.id == id).firstOrNull?.top ==
+                null)) {
+      await _jumpIndexed(id);
+      return;
+    }
     _cancelJump();
     final token = ++_jumpToken;
     _targetId = id;
+    _select(id);
+    _revealChip(id);
     bool valid() => mounted && token == _jumpToken;
     try {
-      // Grow the real renderer's cache through the measured prefix. This is
-      // preparation only: no scroll writes, cloned tiles or corrective moves.
+      // Move toward the measured prefix while the real renderer measures ahead.
       double? top;
       double preparedEnd = 0;
+      double? movingTarget;
       while (valid()) {
         final geometry = _geometry;
         top = geometry?.sections.where((s) => s.id == id).firstOrNull?.top;
@@ -352,6 +404,25 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
             (preparedEnd >= top + viewport || geometry?.extent != null)) {
           break;
         }
+        final nextTarget = top == null
+            ? preparedEnd
+            : top + geometry!.sections.firstWhere((s) => s.id == id).insets.top;
+        if (!mounted) return;
+        if (!MediaQuery.disableAnimationsOf(context) &&
+            nextTarget != movingTarget) {
+          movingTarget = nextTarget;
+          final velocity = _motion.isAnimating ? _motion.velocity : 0.0;
+          _motion.value = _scroll.offset;
+          _motion.animateWith(
+            ScrollSpringSimulation(
+              widget.style.spring(),
+              _scroll.offset,
+              nextTarget,
+              velocity,
+              tolerance: const Tolerance(distance: 0.1, velocity: 1),
+            ),
+          );
+        }
         _cacheExtent.value = _scroll.offset.abs() + preparedEnd + viewport;
         await WidgetsBinding.instance.endOfFrame;
         if (!valid()) return;
@@ -359,43 +430,77 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
         await WidgetsBinding.instance.endOfFrame;
       }
       if (!mounted || !valid() || top == null) return;
-      final geometrySection = _geometry!.sections.firstWhere((s) => s.id == id);
-      // The built-in title has 12px top padding inside the section header.
-      final target = (top + geometrySection.insets.top + 12).clamp(
-        0.0,
-        (_geometry?.extent ?? preparedEnd) -
-                    _scroll.position.viewportDimension <
-                0
-            ? 0.0
-            : (_geometry?.extent ?? preparedEnd) -
-                  _scroll.position.viewportDimension,
-      );
-      _cacheExtent.value = null;
+      // Retarget while earlier rows settle (slow devices / late height changes);
+      // a one-shot spring to a stale top leaves the bar selected and the list
+      // short or past the section (A1/A2). Stop growing cacheExtent so prepare
+      // does not measure an unrelated suffix.
       _moving = true;
-      if (MediaQuery.disableAnimationsOf(context)) {
-        _scroll.jumpTo(target);
-      } else {
-        _motion.value = _scroll.offset;
-        await _motion
-            .animateWith(
-              ScrollSpringSimulation(
-                widget.style.spring(),
-                _scroll.offset,
-                target,
-                0,
-                tolerance: const Tolerance(distance: 0.1, velocity: 1),
-              ),
-            )
-            .orCancel;
+      _cacheExtent.value = null;
+      final reduceMotion = MediaQuery.disableAnimationsOf(context);
+      var stableFrames = 0;
+      while (valid()) {
+        final geometry = _geometry;
+        final section = geometry?.sections
+            .where((s) => s.id == id)
+            .firstOrNull;
+        final liveTop = section?.top;
+        if (geometry == null || section == null || liveTop == null) {
+          await WidgetsBinding.instance.endOfFrame;
+          continue;
+        }
+        preparedEnd = 0;
+        for (final s in geometry.sections) {
+          if (s.top == null) break;
+          preparedEnd = s.top! + s.insets.top + s.headerExtent;
+          for (final row in s.rowExtents) {
+            if (row == null) break;
+            preparedEnd += row;
+          }
+          if (s.extent == null) break;
+          preparedEnd = s.top! + s.extent!;
+        }
+        final viewport = _scroll.position.viewportDimension;
+        final maxScroll =
+            (geometry.extent ?? preparedEnd) - viewport < 0
+            ? 0.0
+            : (geometry.extent ?? preparedEnd) - viewport;
+        final target = (liveTop + section.insets.top).clamp(0.0, maxScroll);
+        if (reduceMotion) {
+          _scroll.jumpTo(target);
+          break;
+        }
+        if (movingTarget != target) {
+          movingTarget = target;
+          stableFrames = 0;
+          final velocity = _motion.isAnimating ? _motion.velocity : 0.0;
+          _motion.value = _scroll.offset;
+          _motion.animateWith(
+            ScrollSpringSimulation(
+              widget.style.spring(),
+              _scroll.offset,
+              target,
+              velocity,
+              tolerance: const Tolerance(distance: 0.1, velocity: 1),
+            ),
+          );
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        if (!valid()) return;
+        final atRest =
+            !_motion.isAnimating && (_scroll.offset - target).abs() < 0.5;
+        if (atRest) {
+          stableFrames++;
+          if (stableFrames >= 2) break;
+        } else {
+          stableFrames = 0;
+        }
       }
       if (!mounted || !valid()) return;
       _endPick = id;
       _targetId = null;
       _moving = false;
       _select(id);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && valid()) _revealChip(id);
-      });
+      _revealChip(id);
       if (!mounted || !valid()) return;
       final section = _selectedSection;
       if (widget.config.focusAfterNavigate == FocusAfterNavigate.announce &&
@@ -414,14 +519,125 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
     }
   }
 
+  Future<void> _jumpIndexed(String id) async {
+    _cancelJump();
+    final token = ++_jumpToken;
+    _targetId = id;
+    final currentId = _geometry?.sectionAtOffset(_scroll.offset) ?? _selectedId;
+    final currentIndex = _sections.indexWhere((s) => s.id == currentId);
+    final targetIndex = _sections.indexWhere((s) => s.id == id);
+    final direction = targetIndex < currentIndex ? -1.0 : 1.0;
+    _select(id);
+    _revealChip(id);
+    bool valid() => mounted && token == _jumpToken;
+    try {
+      final viewport = _scroll.position.viewportDimension;
+      final known = _geometry?.sections.where((s) => s.id == id).firstOrNull;
+      if (known?.top == null) {
+        // Rebase at the known index, so only the last viewport is traversed.
+        _scroll.origin = _scroll.offset + direction * viewport * 2;
+        _scroll.leadingBound = null;
+        _scroll.trailingBound = null;
+        _geometry = null;
+        _originId.value = id;
+        PageStorage.maybeOf(context)?.writeState(context, (
+          id,
+          _sections.indexWhere((s) => s.id == id),
+          _scroll.origin,
+        ));
+        _scroll.jumpTo(_scroll.origin - direction * viewport);
+        await WidgetsBinding.instance.endOfFrame;
+        if (!valid()) return;
+      }
+      _moving = true;
+      double? movingTarget;
+      var stableFrames = 0;
+      while (valid()) {
+        final section = _geometry?.sections
+            .where((s) => s.id == id)
+            .firstOrNull;
+        final top = section?.top;
+        if (top == null) {
+          await WidgetsBinding.instance.endOfFrame;
+          continue;
+        }
+        final target = (top + section!.insets.top).clamp(
+          _scroll.position.minScrollExtent,
+          _scroll.position.maxScrollExtent,
+        );
+        if (!mounted) return;
+        if (MediaQuery.disableAnimationsOf(context)) {
+          _scroll.jumpTo(target);
+          break;
+        }
+        if (movingTarget != target) {
+          movingTarget = target;
+          stableFrames = 0;
+          final velocity = _motion.isAnimating ? _motion.velocity : 0.0;
+          _motion.value = _scroll.offset;
+          _motion.animateWith(
+            ScrollSpringSimulation(
+              widget.style.spring(),
+              _scroll.offset,
+              target,
+              velocity,
+              tolerance: const Tolerance(distance: 0.1, velocity: 1),
+            ),
+          );
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        if (!valid()) return;
+        if (!_motion.isAnimating && (_scroll.offset - target).abs() < .5) {
+          if (++stableFrames >= 2) break;
+        } else {
+          stableFrames = 0;
+        }
+      }
+      if (!mounted || !valid()) return;
+      _endPick = id;
+      _targetId = null;
+      _moving = false;
+      _revealChip(id);
+      final section = _selectedSection;
+      if (widget.config.focusAfterNavigate == FocusAfterNavigate.announce &&
+          section != null) {
+        announce(context, section.label);
+      }
+    } on TickerCanceled {
+      // A pointer, category or data revision owns navigation now.
+    } finally {
+      if (mounted && token == _jumpToken) {
+        _targetId = null;
+        _moving = false;
+      }
+    }
+  }
+
   void _spy() {
     if (!mounted || _targetId != null || !_scroll.hasClients) return;
     final position = _scroll.position;
+    if (_restoring) {
+      // Restored short tails need the suffix dimensions before end selection.
+      if (position.pixels < _scroll.origin && _scroll.trailingBound == null) {
+        return;
+      }
+      if (_scroll.trailingBound != null &&
+          (position.maxScrollExtent - _scroll.trailingBound!).abs() > .5) {
+        return;
+      }
+      _restoring = false;
+    }
     final scrollable =
         position.maxScrollExtent - position.minScrollExtent > 0.5;
     if (!scrollable) return;
     final atEnd =
         scrollable && position.pixels >= position.maxScrollExtent - 0.5;
+    final current = _geometry?.sectionAtOffset(position.pixels);
+    if (!atEnd && current != null) {
+      _endPick = null;
+      if (_select(current)) _revealChip(current);
+      return;
+    }
     final visible = [
       for (final s in _sections)
         if (_geometry?.sections
@@ -457,10 +673,8 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
 
   Future<void> _openPanel() async {
     _cancelJump();
-    final token = _jumpToken;
     final sections = _sections;
     final selectedId = _selectedId;
-    String? picked;
     final route = pickerRoute(
       context,
       barrierLabel: widget.labels.barrier,
@@ -481,8 +695,8 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
             widget.selectedChipTextStyle ?? widget.style.selectedChipTextStyle,
         titleStyle: widget.panelTitleStyle ?? widget.style.panelTitleStyle,
         onPick: (id) {
-          picked = id;
           Navigator.of(ctx).pop();
+          _jumpTo(id);
         },
       ),
     );
@@ -490,12 +704,6 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
     await Navigator.of(context).push(route);
     await route.completed;
     if (_panelRoute == route) _panelRoute = null;
-    if (mounted &&
-        token == _jumpToken &&
-        picked != null &&
-        _sections.any((s) => s.id == picked)) {
-      _jumpTo(picked!);
-    }
   }
 
   @override
@@ -526,7 +734,11 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
                           top: 0,
                           left: 0,
                           right: 0,
-                          height: widget.style.edgeFadeExtent,
+                          // Keep the fade within the title's top padding.
+                          height: widget.style.edgeFadeExtent.clamp(
+                            0.0,
+                            _SectionHeader.padding.top,
+                          ),
                           child: IgnorePointer(
                             child: ClipRect(
                               child: ShaderMask(
@@ -572,9 +784,17 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
     throughSectionId: () => _targetId,
     onRevision: _cancelJump,
     preparation: _cacheExtent,
+    originId: _originId,
     controller: _scroll,
     onGeometry: (geometry) {
       _geometry = geometry;
+      if (_originId.value != null) {
+        _scroll.leadingBound = geometry.sections.first.top;
+        final last = geometry.sections.last;
+        _scroll.trailingBound = last.top == null || last.extent == null
+            ? null
+            : last.top! + last.extent! - _scroll.position.viewportDimension;
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) => _spy());
     },
     sliverKey: (id) => _key(_sliverKeys, id),
@@ -586,12 +806,24 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
       onTap: widget.onSectionTap == null ? null : () => widget.onSectionTap!(s),
     ),
     scrollBuilder: (slivers) => AnimatedBuilder(
-      animation: _cacheExtent,
+      animation: Listenable.merge([_cacheExtent, _originId]),
       builder: (context, _) => CustomScrollView(
         key: const PageStorageKey<String>('sectioned_chip_scroll.list'),
         controller: _scroll,
+        center: _originId.value == null
+            ? null
+            : ValueKey<String>(_originId.value!),
         cacheExtent: _cacheExtent.value,
-        slivers: slivers,
+        slivers: widget.layout is! SectionedGridLayout
+            ? slivers
+            : [
+                for (var i = 0; i < slivers.length; i++)
+                  _SectionOrigin(
+                    key: ValueKey(_sections[i].id),
+                    origin: _scroll.origin,
+                    sliver: slivers[i],
+                  ),
+              ],
       ),
     ),
   );
@@ -603,31 +835,48 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
         final count = _sections.length;
         final widths = [
           for (final section in _sections)
-            chipNaturalWidth(
-              context,
-              section.label,
-              selected: section.id == _selectedId,
-              style: widget.style,
-              textStyle: widget.chipTextStyle ?? widget.style.chipTextStyle,
-              selectedTextStyle:
-                  widget.selectedChipTextStyle ??
-                  widget.style.selectedChipTextStyle,
-            ),
+            [
+              for (final selected in [false, true])
+                chipNaturalWidth(
+                  context,
+                  section.label,
+                  selected: selected,
+                  style: widget.style,
+                  textStyle: widget.chipTextStyle ?? widget.style.chipTextStyle,
+                  selectedTextStyle:
+                      widget.selectedChipTextStyle ??
+                      widget.style.selectedChipTextStyle,
+                ),
+            ].reduce((a, b) => a > b ? a : b),
         ];
         final fits =
             widths.fold<double>(0, (a, b) => a + b) + (count - 1) * 8 <=
-            box.maxWidth;
+            box.maxWidth - widget.style.chipBarLeadingInset;
         final showExpand = config.showExpandButton && !fits;
-        final chipWidth = box.maxWidth - (showExpand ? 48 : 0);
+        final buttonSize = pickerButtonSize(
+          context,
+          chipMinimumHeight(
+            context,
+            widget.style,
+            textStyle: widget.chipTextStyle ?? widget.style.chipTextStyle,
+            selectedTextStyle:
+                widget.selectedChipTextStyle ?? widget.style.selectedChipTextStyle,
+          ),
+        );
+        final chipWidth = box.maxWidth - (showExpand ? buttonSize.width : 0);
         Widget chips = SingleChildScrollView(
           controller: _chipScroll,
           scrollDirection: Axis.horizontal,
+          padding: EdgeInsetsDirectional.only(
+            start: widget.style.chipBarLeadingInset,
+          ),
           child: Row(
             spacing: 8,
             children: [
               for (var i = 0; i < count; i++)
                 ChipControl(
-                  maxWidth: chipWidth,
+                  maxWidth: (chipWidth - widget.style.chipBarLeadingInset)
+                      .clamp(0.0, double.infinity),
                   key: _key(_chipKeys, _sections[i].id),
                   label: _sections[i].label,
                   semanticsLabel: widget.labels.position(
@@ -652,22 +901,41 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
         }
         if (config.showChipFade) {
           final direction = Directionality.of(context);
-          chips = ShaderMask(
-            blendMode: BlendMode.dstIn,
-            shaderCallback: (rect) => const LinearGradient(
-              begin: AlignmentDirectional.centerStart,
-              end: AlignmentDirectional.centerEnd,
-              colors: [Colors.black, Colors.black, Colors.transparent],
-              stops: [0, 0.85, 1],
-            ).createShader(rect, textDirection: direction),
+          chips = AnimatedBuilder(
+            animation: _chipScroll,
             child: chips,
+            builder: (context, child) => ShaderMask(
+              blendMode: BlendMode.dstIn,
+              shaderCallback: (rect) {
+                // A replaced scroll view detaches after this frame's paint.
+                final position = _chipScroll.positions.last;
+                final fade = widget.style.chipBarLeadingInset;
+                final t = rect.width <= 0
+                    ? 0.0
+                    : (fade / rect.width).clamp(0.0, 0.5);
+                return LinearGradient(
+                  begin: AlignmentDirectional.centerStart,
+                  end: AlignmentDirectional.centerEnd,
+                  colors: [
+                    position.pixels > 0 ? Colors.transparent : Colors.black,
+                    Colors.black,
+                    Colors.black,
+                    position.extentAfter > 0
+                        ? Colors.transparent
+                        : Colors.black,
+                  ],
+                  stops: [0, t, 1 - t, 1],
+                ).createShader(rect, textDirection: direction);
+              },
+              child: child,
+            ),
           );
         }
         return HeaderMaterial(
           key: _chipBarKey,
           style: widget.style,
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
                 child: Padding(
@@ -677,16 +945,15 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
               ),
               if (showExpand)
                 SizedBox(
-                  width: 48,
-                  height: 48,
+                  width: buttonSize.width,
+                  height: buttonSize.height,
                   child: PressFeedback(
                     style: widget.style,
                     child: IconButton(
-                      style: IconButton.styleFrom(
-                        splashFactory: NoSplash.splashFactory,
-                      ),
+                      style: plainPickerButtonStyle,
+                      iconSize: 16 * pickerChevronScale(context),
                       tooltip: widget.labels.expand,
-                      icon: const Icon(Icons.expand_more),
+                      icon: const PickerChevron(Icons.expand_more),
                       onPressed: _openPanel,
                     ),
                   ),
@@ -867,6 +1134,7 @@ double chipNaturalWidth(
 }
 
 class _SectionHeader extends StatelessWidget {
+  static const padding = EdgeInsetsDirectional.fromSTEB(12, 12, 12, 4);
   const _SectionHeader({
     super.key,
     required this.label,
@@ -888,7 +1156,7 @@ class _SectionHeader extends StatelessWidget {
       (theme.textTheme.titleMedium ?? const TextStyle()).merge(style),
     );
     Widget content = Padding(
-      padding: const EdgeInsetsDirectional.fromSTEB(12, 12, 12, 4),
+      padding: padding,
       child: Row(
         children: [
           Flexible(child: Text(label, style: textStyle)),
@@ -917,6 +1185,139 @@ class _SectionHeader extends StatelessWidget {
   }
 }
 
+class _IndexedScrollController extends ScrollController {
+  double origin = 0;
+  double? leadingBound;
+  double? trailingBound;
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) => _IndexedScrollPosition(this, physics, context, oldPosition);
+}
+
+class _IndexedScrollPosition extends ScrollPositionWithSingleContext {
+  _IndexedScrollPosition(
+    this.owner,
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) : super(physics: physics, context: context, oldPosition: oldPosition);
+  final _IndexedScrollController owner;
+
+  void resetOrigin() {
+    // Build will replace the center sliver; old pixels use another coordinate system.
+    correctPixels(0);
+    saveScrollOffset();
+  }
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    // The viewport reports dimensions relative to its center sliver.
+    final min = owner.leadingBound ?? minScrollExtent + owner.origin;
+    final max = owner.trailingBound ?? maxScrollExtent + owner.origin;
+    return super.applyContentDimensions(min, max < min ? min : max);
+  }
+}
+
+class _SectionOrigin extends SingleChildRenderObjectWidget {
+  const _SectionOrigin({
+    super.key,
+    required this.origin,
+    required Widget sliver,
+  }) : super(child: sliver);
+  final double origin;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderSectionOrigin(origin);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderSectionOrigin renderObject,
+  ) {
+    if (renderObject.origin != origin) {
+      renderObject.origin = origin;
+      renderObject.markNeedsLayout();
+    }
+  }
+}
+
+class _RenderSectionOrigin extends RenderProxySliver {
+  _RenderSectionOrigin(this.origin);
+  double origin;
+  @override
+  double get centerOffsetAdjustment => -origin;
+}
+
+// A navigation origin gives exact forward tops and exact backward suffixes,
+// even when rows farther away from that origin have never been built.
+class _AnchoredGeometry extends SectionedGeometry {
+  _AnchoredGeometry(SectionedGeometry source, int index, double origin)
+    : _source = source,
+      _index = index,
+      _origin = origin,
+      super(_sections(source, index, origin));
+  final SectionedGeometry _source;
+  final int _index;
+  final double _origin;
+
+  static List<SectionedSectionGeometry> _sections(
+    SectionedGeometry source,
+    int index,
+    double origin,
+  ) {
+    final tops = List<double?>.filled(source.sections.length, null);
+    double? top = origin;
+    for (var i = index; i < tops.length; i++) {
+      tops[i] = top;
+      final extent = source.sections[i].extent;
+      top = top == null || extent == null ? null : top + extent;
+    }
+    top = origin;
+    for (var i = index - 1; i >= 0; i--) {
+      final extent = source.sections[i].extent;
+      top = top == null || extent == null ? null : top - extent;
+      tops[i] = top;
+    }
+    return [
+      for (var i = 0; i < tops.length; i++)
+        SectionedSectionGeometry(
+          id: source.sections[i].id,
+          top: tops[i],
+          headerExtent: source.sections[i].headerExtent,
+          rowExtents: source.sections[i].rowExtents,
+          insets: source.sections[i].insets,
+          columns: source.sections[i].columns,
+        ),
+    ];
+  }
+
+  @override
+  String? sectionAtOffset(double offset) {
+    if (!offset.isFinite) return null;
+    if (offset >= _origin) return super.sectionAtOffset(offset);
+    var end = _origin;
+    for (var i = _index - 1; i >= 0; i--) {
+      final section = _source.sections[i];
+      var start = end - section.insets.bottom;
+      for (final row in section.rowExtents.reversed) {
+        if (row == null) {
+          return offset >= start && offset < end ? section.id : null;
+        }
+        start -= row;
+      }
+      start -= section.headerExtent + section.insets.top;
+      if (offset >= start && offset < end) return section.id;
+      end = start;
+    }
+    return null;
+  }
+}
+
 class _LayoutContent<T> extends StatefulWidget {
   const _LayoutContent({
     required this.sections,
@@ -934,6 +1335,7 @@ class _LayoutContent<T> extends StatefulWidget {
     required this.throughSectionId,
     required this.preparation,
     required this.controller,
+    required this.originId,
   });
 
   final List<ChipSection<T>> sections;
@@ -951,6 +1353,7 @@ class _LayoutContent<T> extends StatefulWidget {
   final String? Function() throughSectionId;
   final ValueListenable<double?> preparation;
   final ScrollController controller;
+  final ValueListenable<String?> originId;
 
   @override
   State<_LayoutContent<T>> createState() => _LayoutContentState<T>();
@@ -990,9 +1393,9 @@ class _LayoutContentState<T> extends State<_LayoutContent<T>> {
   }
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<double?>(
-    valueListenable: widget.preparation,
-    builder: (context, preparation, _) => LayoutBuilder(
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([widget.preparation, widget.originId]),
+    builder: (context, _) => LayoutBuilder(
       builder: (context, box) {
         final scaler = MediaQuery.textScalerOf(context);
         final direction = Directionality.of(context);
@@ -1008,9 +1411,13 @@ class _LayoutContentState<T> extends State<_LayoutContent<T>> {
           _host = null;
         }
         _dimensions = dimensions;
+        // Row height settles (fonts/images) must not cancel an in-flight jump:
+        // on slow devices that left the bar selected while the list never moved.
         final host = _host ??= SectionedMeasurementHost(
           onChanged: _changed,
-          onInvalidated: widget.onRevision,
+          onInvalidated: () {
+            if (widget.throughSectionId() == null) widget.onRevision();
+          },
         );
         final input = SectionedLayoutInput<T>(
           sections: widget.sections,
@@ -1025,16 +1432,22 @@ class _LayoutContentState<T> extends State<_LayoutContent<T>> {
           sectionDecoration: widget.sectionDecoration,
           sliverKey: widget.sliverKey,
           measurementViewportStart:
-              preparation == null || !widget.controller.hasClients
+              widget.preparation.value == null || !widget.controller.hasClients
               ? null
               : widget.controller.offset,
           measurementViewportExtent: box.maxHeight,
         );
-        final geometry = widget.layout.prepare(
+        var geometry = widget.layout.prepare(
           input,
           host,
           throughSectionId: widget.throughSectionId(),
         );
+        final originId = widget.originId.value;
+        if (originId != null) {
+          final origin = (widget.controller as _IndexedScrollController).origin;
+          final index = geometry.sections.indexWhere((s) => s.id == originId);
+          if (index >= 0) geometry = _AnchoredGeometry(geometry, index, origin);
+        }
         widget.onGeometry(geometry);
         return widget.scrollBuilder(
           widget.layout.buildSlivers(context, input, geometry, host),
@@ -1070,8 +1483,16 @@ class _Panel<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final count = sections.length;
+    final rowHeight = chipMinimumHeight(
+      context, style,
+      textStyle: chipTextStyle,
+      selectedTextStyle: selectedChipTextStyle,
+    );
     return PickerPanel(
       style: style,
+      minimumBodyHeight: rowHeight + 16,
+      buttonSize: pickerButtonSize(context, rowHeight),
+      triggerRowHeight: (rowHeight + 8).clamp(48.0, double.infinity),
       title: labels.panelTitle,
       titleStyle: titleStyle,
       closeLabel: labels.collapse,

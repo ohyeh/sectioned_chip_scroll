@@ -168,20 +168,11 @@ class SectionedGeometry {
 
   /// Returns null for unknown ranges and offsets outside the content.
   String? sectionAtOffset(double offset) {
-    if (!offset.isFinite || offset < 0) return null;
-    var low = 0;
-    var high = sections.length;
-    while (low < high) {
-      final mid = (low + high) ~/ 2;
-      final top = sections[mid].top;
-      if (top == null || top > offset) {
-        high = mid;
-      } else {
-        low = mid + 1;
-      }
-    }
-    if (low == 0) return null;
-    final section = sections[low - 1];
+    if (!offset.isFinite) return null;
+    final section = sections
+        .where((s) => s.top != null && s.top! <= offset)
+        .lastOrNull;
+    if (section == null) return null;
     final top = section.top;
     final extent = section.extent;
     if (top == null) return null;
@@ -337,83 +328,93 @@ class SectionedGridLayout extends SectionedLayout {
     SectionedSectionGeometry geometry,
     SectionedMeasurementHost host,
   ) {
-    Widget sliver = SliverList(
-      key: input.sliverKey?.call(section.id),
-      delegate: SliverChildBuilderDelegate(
-        childCount: 1 + geometry.rowExtents.length,
-        (context, index) {
-          if (index == 0) {
-            final start = input.measurementViewportStart;
-            final top = geometry.top;
-            final offscreen =
-                start != null &&
-                (top == null ||
-                    top + geometry.insets.top >=
-                        start + input.measurementViewportExtent ||
-                    top + geometry.insets.top + geometry.headerExtent <= start);
-            return ExcludeFocus(
-              excluding: offscreen,
-              child: ExcludeSemantics(
-                excluding: offscreen,
-                child: IgnorePointer(
-                  ignoring: offscreen,
-                  child: SizedBox(
-                    height: geometry.headerExtent,
-                    child: input.headerBuilder(context, section),
+    Widget sliver = SliverLayoutBuilder(
+      builder: (context, constraints) {
+        final reverse = constraints.growthDirection == GrowthDirection.reverse;
+        return SliverList(
+          delegate: SliverChildBuilderDelegate(
+            childCount: 1 + geometry.rowExtents.length,
+            (context, childIndex) {
+              final index = reverse
+                  ? geometry.rowExtents.length - childIndex
+                  : childIndex;
+              if (index == 0) {
+                final start = input.measurementViewportStart;
+                final top = geometry.top;
+                final offscreen =
+                    start != null &&
+                    (top == null ||
+                        top + geometry.insets.top >=
+                            start + input.measurementViewportExtent ||
+                        top + geometry.insets.top + geometry.headerExtent <=
+                            start);
+                return ExcludeFocus(
+                  excluding: offscreen,
+                  child: ExcludeSemantics(
+                    excluding: offscreen,
+                    child: IgnorePointer(
+                      ignoring: offscreen,
+                      child: SizedBox(
+                        height: geometry.headerExtent,
+                        child: input.headerBuilder(context, section),
+                      ),
+                    ),
                   ),
+                );
+              }
+              final row = index - 1;
+              Widget child = _MeasureRow(
+                host: host,
+                sectionId: section.id,
+                row: row,
+                columns: geometry.columns,
+                textDirection: input.textDirection,
+                children: [
+                  for (
+                    var i = row * geometry.columns;
+                    i < (row + 1) * geometry.columns;
+                    i++
+                  )
+                    i < section.items.length
+                        ? input.itemBuilder(context, section.items[i])
+                        : const SizedBox.shrink(),
+                ],
+              );
+              final start = input.measurementViewportStart;
+              var offscreen = false;
+              if (start != null) {
+                double? top = geometry.top == null
+                    ? null
+                    : geometry.top! +
+                          geometry.insets.top +
+                          geometry.headerExtent;
+                for (var i = 0; i < row && top != null; i++) {
+                  final extent = geometry.rowExtents[i];
+                  top = extent == null ? null : top + extent;
+                }
+                final height = geometry.rowExtents[row];
+                offscreen =
+                    top == null ||
+                    top >= start + input.measurementViewportExtent ||
+                    (height != null && top + height <= start);
+              }
+              return ExcludeFocus(
+                excluding: offscreen,
+                child: ExcludeSemantics(
+                  excluding: offscreen,
+                  child: IgnorePointer(ignoring: offscreen, child: child),
                 ),
-              ),
-            );
-          }
-          final row = index - 1;
-          Widget child = _MeasureRow(
-            host: host,
-            sectionId: section.id,
-            row: row,
-            columns: geometry.columns,
-            textDirection: input.textDirection,
-            children: [
-              for (
-                var i = row * geometry.columns;
-                i < (row + 1) * geometry.columns;
-                i++
-              )
-                i < section.items.length
-                    ? input.itemBuilder(context, section.items[i])
-                    : const SizedBox.shrink(),
-            ],
-          );
-          final start = input.measurementViewportStart;
-          var offscreen = false;
-          if (start != null) {
-            double? top = geometry.top == null
-                ? null
-                : geometry.top! + geometry.insets.top + geometry.headerExtent;
-            for (var i = 0; i < row && top != null; i++) {
-              final extent = geometry.rowExtents[i];
-              top = extent == null ? null : top + extent;
-            }
-            final height = geometry.rowExtents[row];
-            offscreen =
-                top == null ||
-                top >= start + input.measurementViewportExtent ||
-                (height != null && top + height <= start);
-          }
-          return ExcludeFocus(
-            excluding: offscreen,
-            child: ExcludeSemantics(
-              excluding: offscreen,
-              child: IgnorePointer(ignoring: offscreen, child: child),
-            ),
-          );
-        },
-      ),
+              );
+            },
+          ),
+        );
+      },
     );
     sliver = SliverPadding(padding: geometry.insets, sliver: sliver);
     if (input.sectionDecoration case final decoration?) {
       sliver = DecoratedSliver(decoration: decoration, sliver: sliver);
     }
-    return sliver;
+    return KeyedSubtree(key: input.sliverKey?.call(section.id), child: sliver);
   }
 }
 

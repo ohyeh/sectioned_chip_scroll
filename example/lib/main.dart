@@ -123,12 +123,18 @@ class _SceneState extends State<_Scene> {
               setState(() => _selected = section.label),
           itemBuilder: (context, label) => Padding(
             padding: const EdgeInsets.all(12),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+            child: Row(
               children: [
-                const Icon(Icons.storefront_outlined, size: 40),
-                const SizedBox(height: 8),
-                Text(label, textAlign: TextAlign.center),
+                const SizedBox(
+                  width: 72,
+                  height: 72,
+                  child: ColoredBox(
+                    color: Color(0xFFE0E0E0),
+                    child: Icon(Icons.storefront_outlined),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: Text(label)),
               ],
             ),
           ),

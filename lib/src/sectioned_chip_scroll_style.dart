@@ -21,6 +21,7 @@ class SectionedChipScrollStyle {
     this.selectedChipBackground,
     this.selectedChipBorder,
     this.chipMinHeight = 48,
+    this.chipBarLeadingInset = 12,
     this.chipPadding = const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     this.panelBackground,
     this.panelBottomRadius = 20,
@@ -63,6 +64,9 @@ class SectionedChipScrollStyle {
     this.scrimOpacity = 0.24,
     this.panelElevation = 8,
   }) : assert(chipMinHeight >= 48 && chipMinHeight < double.infinity),
+       assert(
+         chipBarLeadingInset >= 0 && chipBarLeadingInset < double.infinity,
+       ),
        assert(panelBottomRadius >= 0 && panelBottomRadius < double.infinity),
        assert(springResponse > 0 && springResponse < double.infinity),
        assert(pressResponse > 0 && pressResponse < double.infinity),
@@ -132,7 +136,12 @@ class SectionedChipScrollStyle {
   final double headerBlur;
 
   /// Depth of the scroll-edge fade.
+  /// The list top fade is capped at the section header's top padding (12).
+  /// The panel bottom fade uses the full extent.
   final double edgeFadeExtent;
+
+  /// Leading content inset inside the scrolling chip bar.
+  final double chipBarLeadingInset;
 
   /// Shared corner unit; panels use twice this radius.
   final double cornerRadius;
@@ -191,6 +200,7 @@ class SectionedChipScrollStyle {
     Color? selectedChipBackground,
     BorderSide? selectedChipBorder,
     double? chipMinHeight,
+    double? chipBarLeadingInset,
     EdgeInsetsGeometry? chipPadding,
     Color? panelBackground,
     double? panelBottomRadius,
@@ -222,6 +232,7 @@ class SectionedChipScrollStyle {
         selectedChipBackground ?? this.selectedChipBackground,
     selectedChipBorder: selectedChipBorder ?? this.selectedChipBorder,
     chipMinHeight: chipMinHeight ?? this.chipMinHeight,
+    chipBarLeadingInset: chipBarLeadingInset ?? this.chipBarLeadingInset,
     chipPadding: chipPadding ?? this.chipPadding,
     panelBackground: panelBackground ?? this.panelBackground,
     panelBottomRadius: panelBottomRadius ?? this.panelBottomRadius,
@@ -257,6 +268,7 @@ class SectionedChipScrollStyle {
           other.selectedChipBackground == selectedChipBackground &&
           other.selectedChipBorder == selectedChipBorder &&
           other.chipMinHeight == chipMinHeight &&
+          other.chipBarLeadingInset == chipBarLeadingInset &&
           other.chipPadding == chipPadding &&
           other.panelBackground == panelBackground &&
           other.panelBottomRadius == panelBottomRadius &&
@@ -289,6 +301,7 @@ class SectionedChipScrollStyle {
     selectedChipBackground,
     selectedChipBorder,
     chipMinHeight,
+    chipBarLeadingInset,
     chipPadding,
     panelBackground,
     panelBottomRadius,

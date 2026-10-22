@@ -23,6 +23,7 @@ CategorizedChipScrollView<int> _view(
   labels: const SectionedChipScrollLabels(categoryPanelTitle: 'Categories'),
   categories: categories,
   itemBuilder: testItem,
+  layout: const SectionedLayout.grid(),
   config: config,
   onCategorySelected: onCategorySelected,
 );
