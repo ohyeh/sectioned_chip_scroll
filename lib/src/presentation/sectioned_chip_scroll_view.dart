@@ -1,17 +1,17 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart' show PointerSignalEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:sectioned_chip_scroll/src/domain/chip_section.dart';
-import 'package:sectioned_chip_scroll/src/presentation/picker.dart';
-import 'package:sectioned_chip_scroll/src/presentation/motion.dart';
-import 'package:sectioned_chip_scroll/src/presentation/chrome.dart';
 import 'package:sectioned_chip_scroll/src/application/sectioned_chip_scroll_config.dart';
+import 'package:sectioned_chip_scroll/src/domain/chip_section.dart';
+import 'package:sectioned_chip_scroll/src/domain/section_geometry.dart';
+import 'package:sectioned_chip_scroll/src/presentation/chrome.dart';
+import 'package:sectioned_chip_scroll/src/presentation/motion.dart';
+import 'package:sectioned_chip_scroll/src/presentation/picker.dart';
 import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_style.dart';
 import 'package:sectioned_chip_scroll/src/presentation/sectioned_layout.dart';
-import 'package:sectioned_chip_scroll/src/domain/section_geometry.dart';
-
-export 'sectioned_layout.dart' show SectionColumnsBuilder;
 
 /// A chip bar above a list of sections, with scroll-spy.
 ///
@@ -154,7 +154,8 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
   String? _endPick;
   // The list reads only widget data, so a selection change (setState) reuses
   // it and rebuilds just the chip bar. Cleared when its inputs change.
-  Widget? _listCache;
+  _LayoutContent<T>? _listCache;
+  int? _listColumns;
   SectionedGeometry? _geometry;
 
   /// Current immutable snapshot, including explicitly unknown row extents.
@@ -243,7 +244,6 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
     }
     if (rangeChanged ||
         w.itemBuilder != oldWidget.itemBuilder ||
-        w.columnsBuilder != oldWidget.columnsBuilder ||
         w.style != oldWidget.style ||
         w.config != oldWidget.config) {
       _listCache = null;
@@ -342,7 +342,7 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
     final fade = widget.style.chipBarLeadingInset;
     final room = position.viewportDimension - box.size.width;
     final margin = room >= fade * 2
-        ? (room - fade).clamp(fade, 48.0)
+        ? (room - fade).clamp(fade, math.max(fade, 48.0))
         : room.clamp(0.0, fade);
     position.jumpTo(
       (start - margin).clamp(
@@ -723,7 +723,7 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
             child: Stack(
               fit: StackFit.expand,
               children: [
-                _listCache ??= _list(config),
+                _cachedList(config),
                 AnimatedBuilder(
                   animation: _scroll,
                   builder: (context, _) =>
@@ -767,7 +767,40 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
     return clampTextScale(config.maxTextScale, view);
   }
 
-  Widget _list(SectionedChipScrollConfig config) => _LayoutContent<T>(
+  Widget _cachedList(SectionedChipScrollConfig config) {
+    final layout = widget.layout;
+    if (layout is! SectionedGridLayout || layout is SectionedListLayout) {
+      return _listCache ??= _list(config);
+    }
+    return LayoutBuilder(
+      builder: (context, box) {
+        final width =
+            box.maxWidth -
+            (widget.sectionDecoration?.padding
+                    .resolve(Directionality.of(context))
+                    .horizontal ??
+                0);
+        final scaler = MediaQuery.textScalerOf(context);
+        final columns =
+            (widget.columnsBuilder ??
+            layout.columnsBuilder ??
+            SectionedGridLayout.defaultColumns)(width, scaler);
+        final cachedLayout = _listCache?.layout;
+        // A cached rule may differ at a new width even if the count is unchanged.
+        if (_listColumns != columns ||
+            (cachedLayout is SectionedGridLayout &&
+                (cachedLayout.columnsBuilder ??
+                        SectionedGridLayout.defaultColumns)(width, scaler) !=
+                    columns)) {
+          _listCache = null;
+        }
+        _listColumns = columns;
+        return _listCache ??= _list(config);
+      },
+    );
+  }
+
+  _LayoutContent<T> _list(SectionedChipScrollConfig config) => _LayoutContent(
     sections: _sections,
     layout: widget.columnsBuilder == null
         ? widget.layout
@@ -954,7 +987,10 @@ class SectionedChipScrollViewState<T> extends State<SectionedChipScrollView<T>>
                       style: plainPickerButtonStyle,
                       iconSize: 16 * pickerChevronScale(context),
                       tooltip: widget.labels.expand,
-                      icon: const PickerChevron(Icons.expand_more),
+                      icon: PickerChevron(
+                        Icons.expand_more,
+                        color: widget.style.pickerChevronColor,
+                      ),
                       onPressed: _openPanel,
                     ),
                   ),
@@ -1362,7 +1398,7 @@ class _LayoutContent<T> extends StatefulWidget {
 
 class _LayoutContentState<T> extends State<_LayoutContent<T>> {
   SectionedMeasurementHost? _host;
-  (double, TextScaler, TextDirection, TextStyle)? _dimensions;
+  (double, TextScaler, TextDirection, TextStyle, int?)? _dimensions;
   bool _scheduled = false;
 
   @override
@@ -1406,7 +1442,24 @@ class _LayoutContentState<T> extends State<_LayoutContent<T>> {
             widget.headerStyle,
           ),
         );
-        final dimensions = (box.maxWidth, scaler, direction, headerStyle);
+        final layout = widget.layout;
+        final columns = layout is SectionedGridLayout
+            ? (layout.columnsBuilder ?? SectionedGridLayout.defaultColumns)(
+                box.maxWidth -
+                    (widget.sectionDecoration?.padding
+                            .resolve(direction)
+                            .horizontal ??
+                        0),
+                scaler,
+              )
+            : null;
+        final dimensions = (
+          box.maxWidth,
+          scaler,
+          direction,
+          headerStyle,
+          columns,
+        );
         if (_dimensions != dimensions) {
           if (_dimensions != null) widget.onRevision();
           _host = null;

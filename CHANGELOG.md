@@ -1,3 +1,11 @@
+## 0.2.1
+
+- `SectionedChipScrollStyle.pickerChevronColor` themes the picker chevrons;
+  the default color is unchanged.
+- A chip bar leading inset above 48 no longer throws when a chip is revealed.
+- Changing a grid columns rule to a different column count updates the grid.
+- README documents installing from a git release tag.
+
 ## 0.2.0
 
 - Far jumps anchor the list at the target section, so a jump to an unbuilt

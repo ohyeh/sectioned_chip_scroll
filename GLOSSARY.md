@@ -7,7 +7,7 @@ One term, one meaning. Code, docs, tests and commit scopes use these words.
 | Layer | Holds | Depends on |
 |---|---|---|
 | `domain/` | Section data and its rules: `ChipSection`, `SectionCategory`, `uniqueIds`, section geometry (`SectionedGeometry`, `SectionedSectionGeometry`, `SectionedMeasurementHost`). | `flutter/foundation`, `flutter/painting` only |
-| `application/` | Options a host app passes in: `SectionedChipScrollConfig`, `CategorizedChipScrollConfig`, `SectionedChipScrollLabels`, behavior enums. | foundation |
+| `application/` | Immutable options a host app passes in, with no widgets and no orchestration: `SectionedChipScrollConfig`, `CategorizedChipScrollConfig`, `SectionedChipScrollLabels`, behavior enums. | foundation |
 | `presentation/` | Widgets, render objects, style and motion: the two views, chip bar, picker, layouts, `SectionedChipScrollStyle`. | domain, application, Flutter widgets |
 
 `lib/sectioned_chip_scroll.dart` is the only public import. Files under

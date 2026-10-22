@@ -27,6 +27,7 @@ class SectionedChipScrollStyle {
     this.panelBottomRadius = 20,
     this.panelShadowColor,
     this.scrimColor = Colors.black,
+    this.pickerChevronColor = const Color(0xFF2C2A2D),
     this.chipShape = const RoundedRectangleBorder(
       borderRadius: BorderRadius.all(Radius.circular(8)),
     ),
@@ -117,6 +118,9 @@ class SectionedChipScrollStyle {
   /// Scrim tint, combined with [scrimOpacity].
   final Color scrimColor;
 
+  /// Color of the picker expand and collapse chevrons.
+  final Color pickerChevronColor;
+
   /// Perceptual response in seconds; not a fixed animation duration.
   final double springResponse;
 
@@ -206,6 +210,7 @@ class SectionedChipScrollStyle {
     double? panelBottomRadius,
     Color? panelShadowColor,
     Color? scrimColor,
+    Color? pickerChevronColor,
     OutlinedBorder? chipShape,
     TextStyle? chipTextStyle,
     TextStyle? selectedChipTextStyle,
@@ -238,6 +243,7 @@ class SectionedChipScrollStyle {
     panelBottomRadius: panelBottomRadius ?? this.panelBottomRadius,
     panelShadowColor: panelShadowColor ?? this.panelShadowColor,
     scrimColor: scrimColor ?? this.scrimColor,
+    pickerChevronColor: pickerChevronColor ?? this.pickerChevronColor,
     chipShape: chipShape ?? this.chipShape,
     chipTextStyle: chipTextStyle ?? this.chipTextStyle,
     selectedChipTextStyle: selectedChipTextStyle ?? this.selectedChipTextStyle,
@@ -274,6 +280,7 @@ class SectionedChipScrollStyle {
           other.panelBottomRadius == panelBottomRadius &&
           other.panelShadowColor == panelShadowColor &&
           other.scrimColor == scrimColor &&
+          other.pickerChevronColor == pickerChevronColor &&
           other.chipShape == chipShape &&
           other.chipTextStyle == chipTextStyle &&
           other.selectedChipTextStyle == selectedChipTextStyle &&
@@ -307,6 +314,7 @@ class SectionedChipScrollStyle {
     panelBottomRadius,
     panelShadowColor,
     scrimColor,
+    pickerChevronColor,
     chipShape,
     chipTextStyle,
     selectedChipTextStyle,

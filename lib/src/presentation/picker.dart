@@ -1,7 +1,8 @@
-import 'dart:ui' as ui;
 import 'dart:math' as math;
-import 'package:flutter/material.dart';
+import 'dart:ui' as ui;
+
 import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:sectioned_chip_scroll/src/presentation/chrome.dart';
 import 'package:sectioned_chip_scroll/src/presentation/motion.dart';
 import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_style.dart';
@@ -189,7 +190,7 @@ final plainPickerButtonStyle = IconButton.styleFrom(
 /// An icon identifier with the board's vector instead of a font glyph.
 class PickerChevron extends Icon {
   /// Draws the expand or collapse chevron.
-  const PickerChevron(super.icon, {super.key});
+  const PickerChevron(super.icon, {super.key, super.color});
 
   @override
   Widget build(BuildContext context) {
@@ -199,15 +200,19 @@ class PickerChevron extends Icon {
       heightFactor: 1,
       child: CustomPaint(
         size: Size(16 * scale, 8 * scale),
-        painter: _PickerChevronPainter(icon == Icons.expand_less),
+        painter: _PickerChevronPainter(
+          icon == Icons.expand_less,
+          color ?? const Color(0xFF2C2A2D),
+        ),
       ),
     );
   }
 }
 
 class _PickerChevronPainter extends CustomPainter {
-  const _PickerChevronPainter(this.up);
+  const _PickerChevronPainter(this.up, this.color);
   final bool up;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -220,7 +225,7 @@ class _PickerChevronPainter extends CustomPainter {
     canvas.drawPath(
       path,
       Paint()
-        ..color = const Color(0xFF2C2A2D)
+        ..color = color
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.6
         ..strokeCap = StrokeCap.round
@@ -230,7 +235,8 @@ class _PickerChevronPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_PickerChevronPainter oldDelegate) => up != oldDelegate.up;
+  bool shouldRepaint(_PickerChevronPainter oldDelegate) =>
+      up != oldDelegate.up || color != oldDelegate.color;
 }
 
 /// The shell of a picker: a title, a close button and a scrolling body.
@@ -404,7 +410,10 @@ class _PickerPanelState extends State<PickerPanel> {
                     style: plainPickerButtonStyle,
                     iconSize: 16 * pickerChevronScale(context),
                     tooltip: widget.closeLabel,
-                    icon: PickerChevron(widget.closeIcon),
+                    icon: PickerChevron(
+                      widget.closeIcon,
+                      color: style.pickerChevronColor,
+                    ),
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ),

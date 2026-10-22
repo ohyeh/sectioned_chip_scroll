@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-
 import 'package:sectioned_chip_scroll/src/domain/chip_section.dart';
 import 'package:sectioned_chip_scroll/src/domain/section_geometry.dart';
 

@@ -187,6 +187,25 @@ void main() {
       expect(style.copyWith(), style);
     });
 
+    testWidgets('inset 64 keeps a picked non-first chip visible', (
+      tester,
+    ) async {
+      await build(
+        tester,
+        style: const SectionedChipScrollStyle.outlined(chipBarLeadingInset: 64),
+      );
+      await _openPanel(tester);
+      await tester.ensureVisible(find.text('Section 10').last);
+      await _pick(tester, 'Section 10');
+      expect(tester.takeException(), isNull);
+      final chip = find.byWidgetPredicate(
+        (w) => w is ChipControl && w.selected && w.label == 'Section 10',
+      );
+      expect(tester.getRect(chip).left, greaterThanOrEqualTo(64));
+      final button = tester.getRect(find.byIcon(Icons.expand_more));
+      expect(tester.getRect(chip).right, lessThanOrEqualTo(button.left));
+    });
+
     testWidgets('L1 uneven list scroll-spy follows the visible section', (
       tester,
     ) async {
@@ -2598,6 +2617,44 @@ void main() {
         ),
         throwsAssertionError,
       );
+    });
+
+    testWidgets('grid builder swap updates one column to three', (
+      tester,
+    ) async {
+      final sections = testSections([6]);
+      Widget build(SectionColumnsBuilder columns) => testApp(
+        SectionedChipScrollView<int>(
+          sections: sections,
+          itemBuilder: testItem,
+          layout: SectionedGridLayout(columnsBuilder: columns),
+        ),
+      );
+      await tester.pumpWidget(build((w, s) => 1));
+      await tester.pumpAndSettle();
+      expect(_state(tester).geometry!.sections.single.columns, 1);
+      final first = tester.getRect(find.text('item 0'));
+      expect(tester.getRect(find.text('item 1')).top, greaterThan(first.top));
+
+      final list = tester.widget<CustomScrollView>(
+        find.byType(CustomScrollView),
+      );
+      for (var frame = 0; frame < 3; frame++) {
+        await tester.pumpWidget(build((w, s) => 1 + frame * 0));
+        await tester.pumpAndSettle();
+        expect(tester.widget(find.byType(CustomScrollView)), same(list));
+      }
+
+      await tester.pumpWidget(build((w, s) => 3));
+      await tester.pumpAndSettle();
+      expect(_state(tester).geometry!.sections.single.columns, 3);
+      final row = tester.getRect(find.text('item 0'));
+      final second = tester.getRect(find.text('item 1'));
+      final third = tester.getRect(find.text('item 2'));
+      expect(second.top, row.top);
+      expect(third.top, row.top);
+      expect(second.left, greaterThan(row.left));
+      expect(third.left, greaterThan(second.left));
     });
 
     testWidgets('inline columnsBuilder does not cancel running jump', (

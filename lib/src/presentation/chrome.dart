@@ -1,5 +1,6 @@
-import 'dart:ui' as ui;
 import 'dart:math' as math;
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_style.dart';

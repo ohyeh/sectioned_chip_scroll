@@ -3,13 +3,13 @@ import 'dart:ui' show SemanticsRole;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:sectioned_chip_scroll/src/domain/chip_section.dart';
-import 'package:sectioned_chip_scroll/src/presentation/picker.dart';
-import 'package:sectioned_chip_scroll/src/presentation/motion.dart';
-import 'package:sectioned_chip_scroll/src/presentation/chrome.dart';
 import 'package:sectioned_chip_scroll/src/application/sectioned_chip_scroll_config.dart';
-import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_view.dart';
+import 'package:sectioned_chip_scroll/src/domain/chip_section.dart';
+import 'package:sectioned_chip_scroll/src/presentation/chrome.dart';
+import 'package:sectioned_chip_scroll/src/presentation/motion.dart';
+import 'package:sectioned_chip_scroll/src/presentation/picker.dart';
 import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_style.dart';
+import 'package:sectioned_chip_scroll/src/presentation/sectioned_chip_scroll_view.dart';
 import 'package:sectioned_chip_scroll/src/presentation/sectioned_layout.dart';
 
 /// Two levels: category tabs (level 1) that switch a

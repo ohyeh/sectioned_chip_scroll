@@ -1,5 +1,5 @@
 name: sectioned_chip_scroll_example
-description: Demo of sectioned_chip_scroll with every option switchable at run time.
+description: Motion scenes (few, flow, many, long) of sectioned_chip_scroll at text scale 1.0 and 3.12.
 publish_to: 'none'
 version: 1.0.0+1
 

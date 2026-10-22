@@ -40,6 +40,55 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('custom chevron color reaches expand and collapse painters', (
+    tester,
+  ) async {
+    const defaults = SectionedChipScrollStyle.outlined();
+    final style = defaults.copyWith(pickerChevronColor: Colors.red);
+    expect(defaults.pickerChevronColor, const Color(0xFF2C2A2D));
+    expect(
+      style,
+      const SectionedChipScrollStyle.outlined(pickerChevronColor: Colors.red),
+    );
+    expect(style.copyWith(), style);
+    expect(style.copyWith().hashCode, style.hashCode);
+    expect(style, isNot(defaults));
+    await tester.pumpWidget(
+      testApp(
+        SectionedChipScrollView<int>(
+          sections: testSections(List.filled(35, 8)),
+          itemBuilder: testItem,
+          style: style,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final icon in [Icons.expand_more, Icons.expand_less]) {
+      if (icon == Icons.expand_less) {
+        await tester.tap(_button(Icons.expand_more));
+        await tester.pumpAndSettle();
+      }
+      final paint = tester.widget<CustomPaint>(
+        find.descendant(
+          of: find.byIcon(icon),
+          matching: find.byType(CustomPaint),
+        ),
+      );
+      await tester.runAsync(() async {
+        final recorder = ui.PictureRecorder();
+        paint.painter!.paint(ui.Canvas(recorder)..scale(8), const Size(16, 8));
+        final picture = recorder.endRecording();
+        final image = await picture.toImage(128, 64);
+        final bytes = (await image.toByteData())!;
+        final apex = ((icon == Icons.expand_more ? 56 : 8) * 128 + 64) * 4;
+        final rgba = [for (var c = 0; c < 4; c++) bytes.getUint8(apex + c)];
+        image.dispose();
+        picture.dispose();
+        expect(rgba, [244, 67, 54, 255]);
+      });
+    }
+  });
+
   for (final scale in [1.0, 3.12]) {
     for (final title in [
       'Go',

@@ -21,6 +21,21 @@ A scroll-spy chip bar for sectioned content in Flutter.
 
 Not related to the `scroll_spy` package.
 
+## Install
+
+Not on pub.dev yet. Depend on a release tag from git:
+
+```yaml
+dependencies:
+  sectioned_chip_scroll:
+    git:
+      url: https://github.com/ohyeh/sectioned_chip_scroll.git
+      ref: v0.2.1
+```
+
+Import only `package:sectioned_chip_scroll/sectioned_chip_scroll.dart`;
+files under `lib/src/` are not a public interface.
+
 ## Usage
 
 ```dart
